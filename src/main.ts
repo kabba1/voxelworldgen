@@ -1,14 +1,17 @@
 import * as THREE from "three";
 import "./styles.css";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
-import { FlyCameraController } from "./input/FlyCameraController";
-import { buildPlotPaths } from "./render/plotPaths";
+import { BlockEditor } from "./input/BlockEditor";
+import { PlayerCameraController } from "./input/PlayerCameraController";
+import { EditableBlockRenderer } from "./render/editableBlocks";
 import { GoodVibesSky } from "./render/skybox";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { BLOCKS } from "./world/blocks";
+import { EditableWorld } from "./world/editableWorld";
 import { FlatWorld } from "./world/flatWorld";
 import { generatePlotLayout } from "./world/plots";
+import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
@@ -59,13 +62,17 @@ window.addEventListener("resize", onResize);
 renderer.domElement.addEventListener("webglcontextlost", onContextLost);
 renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
 
-let controller: FlyCameraController | null = null;
+let controller: PlayerCameraController | null = null;
 let stats: StatsOverlay | null = null;
 let sky: GoodVibesSky | null = null;
+let editor: BlockEditor | null = null;
+let editableRenderer: EditableBlockRenderer | null = null;
 let lastTime = performance.now();
 
 const dispose = () => {
   controller?.dispose();
+  editor?.dispose();
+  editableRenderer?.dispose();
   stats?.dispose();
   sky?.dispose();
   window.removeEventListener("resize", onResize);
@@ -79,21 +86,40 @@ const start = () => {
   scene.add(sky.group);
 
   const materials = loadTerrainMaterials();
-  const { group: terrain, stats: worldStats } = buildFlatTerrain(world, materials);
-  scene.add(terrain);
-
   const plotLayout = generatePlotLayout(world);
-  const { group: plotPaths, triangles: plotPathTriangles } = buildPlotPaths(world, plotLayout, materials[BLOCKS.path]);
-  scene.add(plotPaths);
-  const plotStats = { ...plotLayout.stats, outlineTriangles: plotPathTriangles };
+  const surfaceBlocks = buildSurfaceBlockMap(world, plotLayout);
+  const editableWorld = new EditableWorld(world, surfaceBlocks.blockAt);
+  const { group: terrain, stats: worldStats, setHiddenTopColumns } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
+  scene.add(terrain);
+  const plotStats = { ...plotLayout.stats, outlineTriangles: surfaceBlocks.rects.filter((rect) => rect.blockId === BLOCKS.path).length };
 
-  const target = new THREE.Vector3(0, world.worldHeight(), 0);
-  camera.position.set(-120, world.worldHeight() + 96, 180);
-  controller = new FlyCameraController(camera, renderer.domElement);
-  controller.moveSpeed = 96;
+  editableRenderer = new EditableBlockRenderer(world, materials);
+  scene.add(editableRenderer.group);
+
+  camera.position.set(-34, world.worldHeight() + 1.7, 54);
+  const target = new THREE.Vector3(camera.position.x + 5, world.worldHeight(), camera.position.z - 5);
+  controller = new PlayerCameraController(camera, renderer.domElement, world.worldHeight());
   controller.lookAt(target);
 
-  stats = new StatsOverlay(renderer, camera, controller, worldStats, plotStats, () => sky?.getState() ?? null);
+  editor = new BlockEditor({
+    camera,
+    domElement: renderer.domElement,
+    baseWorld: world,
+    editableWorld,
+    editableRenderer,
+    terrainGroup: terrain,
+    setHiddenTopColumns
+  });
+
+  stats = new StatsOverlay(
+    renderer,
+    camera,
+    controller,
+    worldStats,
+    plotStats,
+    () => sky?.getState() ?? null,
+    () => editor?.getState() ?? null
+  );
 
   renderer.setAnimationLoop((time) => {
     const deltaSeconds = Math.min(0.05, (time - lastTime) / 1000);

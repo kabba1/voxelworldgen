@@ -22,16 +22,10 @@ const makeMaterial = (texturePath: string) => {
 };
 
 export const loadTerrainMaterials = (): TerrainMaterials => {
-  const pathMaterial = makeMaterial("/textures/path.png");
-  pathMaterial.polygonOffset = true;
-  pathMaterial.polygonOffsetFactor = -1;
-  pathMaterial.polygonOffsetUnits = -1;
-  pathMaterial.depthWrite = false;
-
   return {
     [BLOCKS.grass]: makeMaterial("/textures/grass.png"),
     [BLOCKS.dirt]: makeMaterial("/textures/dirt.png"),
     [BLOCKS.stone]: makeMaterial("/textures/stone.png"),
-    [BLOCKS.path]: pathMaterial
+    [BLOCKS.path]: makeMaterial("/textures/path.png")
   };
 };

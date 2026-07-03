@@ -1,7 +1,8 @@
 import type * as THREE from "three";
 import type { FlatWorldStats } from "../world/flatWorld";
 import type { PlotLayoutStats } from "../world/plots";
-import type { FlyCameraController } from "../input/FlyCameraController";
+import type { BlockEditorState } from "../input/BlockEditor";
+import type { PlayerCameraController } from "../input/PlayerCameraController";
 import type { SkyCycleState } from "../render/skybox";
 
 export class StatsOverlay {
@@ -15,10 +16,11 @@ export class StatsOverlay {
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
     private readonly camera: THREE.PerspectiveCamera,
-    private readonly controller: FlyCameraController,
+    private readonly controller: PlayerCameraController,
     private readonly worldStats: FlatWorldStats,
     private readonly plotStats: PlotLayoutStats,
-    private readonly getSkyState?: () => SkyCycleState | null
+    private readonly getSkyState?: () => SkyCycleState | null,
+    private readonly getEditorState?: () => BlockEditorState | null
   ) {
     this.element = document.createElement("div");
     this.element.className = "stats";
@@ -46,6 +48,8 @@ export class StatsOverlay {
     const memoryInfo = this.renderer.info.memory;
     const p = this.camera.position;
     const sky = this.getSkyState?.();
+    const editor = this.getEditorState?.();
+    const cameraMode = this.controller.getMode();
 
     const rows = [
       "<strong>Agency Voxel Stats</strong>",
@@ -64,8 +68,12 @@ export class StatsOverlay {
       `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
       `plots ${this.plotStats.plotCount} | sep ${this.plotStats.separatorBlocks}`,
       `plot sizes ${this.plotStats.smallPlots}/${this.plotStats.mediumPlots}/${this.plotStats.largePlots}`,
-      `plot cover ${(this.plotStats.coverageRatio * 100).toFixed(1)}% | path tris ${this.plotStats.outlineTriangles.toLocaleString()}`,
+      `plot cover ${(this.plotStats.coverageRatio * 100).toFixed(1)}% | path rects ${this.plotStats.outlineTriangles.toLocaleString()}`,
+      editor ? `held ${editor.heldBlockName} | edits ${editor.edits}` : null,
+      editor ? `action ${editor.lastAction}` : null,
       `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`,
+      `view ${cameraMode}${cameraMode === "walk" ? ` | ${this.controller.isGrounded() ? "grounded" : "airborne"}` : ""}`,
+      "F toggles walk/fly",
       `mouse ${this.controller.isPointerLocked() ? "locked" : "click to look"}`
     ];
 

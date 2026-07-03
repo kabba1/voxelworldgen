@@ -14,12 +14,18 @@ export type Plot = {
   sizeClass: PlotSizeClass;
 };
 
+export type PlotPathRect = {
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+};
+
 export type PlotLayoutConfig = {
   marginBlocks: number;
   separatorBlocks: number;
-  minSpanBlocks: number;
-  maxSpanBlocks: number;
-  mergeChance: number;
+  sideLengthOptions: readonly number[];
+  districtSideLengthOptions: readonly number[];
   seed: number;
 };
 
@@ -37,6 +43,7 @@ export type PlotLayoutStats = {
 
 export type PlotLayout = {
   plots: Plot[];
+  pathRects: PlotPathRect[];
   config: PlotLayoutConfig;
   stats: PlotLayoutStats;
 };
@@ -47,11 +54,10 @@ type Span = {
 };
 
 export const DEFAULT_PLOT_LAYOUT_CONFIG: PlotLayoutConfig = {
-  marginBlocks: 90,
-  separatorBlocks: 12,
-  minSpanBlocks: 96,
-  maxSpanBlocks: 220,
-  mergeChance: 0.22,
+  marginBlocks: 5,
+  separatorBlocks: 5,
+  sideLengthOptions: [20, 30, 40, 50],
+  districtSideLengthOptions: [220, 250, 280, 310, 340, 370, 400],
   seed: 0xaced2026
 };
 
@@ -66,45 +72,72 @@ const mulberry32 = (seed: number) => {
   };
 };
 
-const randomInt = (random: () => number, min: number, max: number) => {
-  return min + Math.floor(random() * (max - min + 1));
+const average = (values: readonly number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+
+const findSpanCount = (total: number, config: PlotLayoutConfig) => {
+  const minSize = Math.min(...config.sideLengthOptions);
+  const maxSize = Math.max(...config.sideLengthOptions);
+  const targetAverage = average(config.sideLengthOptions);
+  const usable = total - config.marginBlocks * 2;
+  const targetCount = Math.max(1, Math.round((usable + config.separatorBlocks) / (targetAverage + config.separatorBlocks)));
+  const maxCount = Math.floor((usable + config.separatorBlocks) / (minSize + config.separatorBlocks));
+  let bestCount = 1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let count = 1; count <= maxCount; count += 1) {
+    const targetSizeSum = usable - config.separatorBlocks * (count - 1);
+    const canFill =
+      targetSizeSum >= count * minSize &&
+      targetSizeSum <= count * maxSize &&
+      targetSizeSum % 10 === 0;
+
+    if (!canFill) continue;
+
+    const distance = Math.abs(count - targetCount);
+    if (distance < bestDistance) {
+      bestCount = count;
+      bestDistance = distance;
+    }
+  }
+
+  return bestCount;
 };
 
 const buildSpans = (total: number, config: PlotLayoutConfig, random: () => number): Span[] => {
   const spans: Span[] = [];
+  const count = findSpanCount(total, config);
+  const minSize = Math.min(...config.sideLengthOptions);
+  const maxSize = Math.max(...config.sideLengthOptions);
+  let remainingSizeSum = total - config.marginBlocks * 2 - config.separatorBlocks * (count - 1);
   let cursor = config.marginBlocks;
-  const end = total - config.marginBlocks;
 
-  while (cursor + config.minSpanBlocks <= end) {
-    const remaining = end - cursor;
-    const nextMin = config.separatorBlocks + config.minSpanBlocks;
-    const size =
-      remaining <= config.maxSpanBlocks || remaining - config.maxSpanBlocks < nextMin
-        ? remaining
-        : randomInt(random, config.minSpanBlocks, config.maxSpanBlocks);
-
+  for (let index = 0; index < count; index += 1) {
+    const remainingSlots = count - index - 1;
+    const candidates = config.sideLengthOptions.filter((size) => {
+      const nextRemaining = remainingSizeSum - size;
+      return nextRemaining >= remainingSlots * minSize && nextRemaining <= remainingSlots * maxSize;
+    });
+    const size = candidates[Math.floor(random() * candidates.length)] ?? minSize;
     spans.push({ start: cursor, size });
-    cursor += size + config.separatorBlocks;
+    cursor += size;
+    remainingSizeSum -= size;
+    if (index < count - 1) cursor += config.separatorBlocks;
   }
 
   return spans;
 };
 
 const classifyPlot = (area: number): PlotSizeClass => {
-  if (area < 18_000) return "small";
-  if (area < 48_000) return "medium";
+  if (area <= 400) return "small";
+  if (area <= 1500) return "medium";
   return "large";
 };
 
-const makePlot = (id: string, columns: Span[], rows: Span[], column: number, row: number, columnSpan: number, rowSpan: number): Plot => {
-  const firstColumn = columns[column];
-  const lastColumn = columns[column + columnSpan - 1];
-  const firstRow = rows[row];
-  const lastRow = rows[row + rowSpan - 1];
-  const x = firstColumn.start;
-  const z = firstRow.start;
-  const width = lastColumn.start + lastColumn.size - x;
-  const depth = lastRow.start + lastRow.size - z;
+const makePlot = (id: string, column: Span, row: Span): Plot => {
+  const x = column.start;
+  const z = row.start;
+  const width = column.size;
+  const depth = row.size;
   const area = width * depth;
 
   return {
@@ -120,34 +153,145 @@ const makePlot = (id: string, columns: Span[], rows: Span[], column: number, row
   };
 };
 
+const makePathRect = (x: number, z: number, width: number, depth: number): PlotPathRect | null => {
+  if (width <= 0 || depth <= 0) return null;
+  return { x, z, width, depth };
+};
+
+const pushPathRect = (pathRects: PlotPathRect[], x: number, z: number, width: number, depth: number) => {
+  const rect = makePathRect(x, z, width, depth);
+  if (rect) pathRects.push(rect);
+};
+
+const addPathRectsAroundSpans = (
+  pathRects: PlotPathRect[],
+  spans: Span[],
+  fixedStart: number,
+  fixedSize: number,
+  variableStart: number,
+  variableSize: number,
+  axis: "x" | "z"
+) => {
+  const push = (start: number, size: number) => {
+    if (axis === "x") {
+      pushPathRect(pathRects, start, fixedStart, size, fixedSize);
+      return;
+    }
+    pushPathRect(pathRects, fixedStart, start, fixedSize, size);
+  };
+
+  if (spans.length === 0) {
+    push(variableStart, variableSize);
+    return;
+  }
+
+  push(variableStart, spans[0].start);
+  for (let index = 0; index < spans.length - 1; index += 1) {
+    const start = variableStart + spans[index].start + spans[index].size;
+    const end = variableStart + spans[index + 1].start;
+    push(start, end - start);
+  }
+  const last = spans[spans.length - 1];
+  const lastEnd = last.start + last.size;
+  push(variableStart + lastEnd, variableSize - lastEnd);
+};
+
 export const generatePlotLayout = (
   world: FlatWorld,
   config: PlotLayoutConfig = DEFAULT_PLOT_LAYOUT_CONFIG
 ): PlotLayout => {
   const random = mulberry32(config.seed);
-  const columns = buildSpans(world.width, config, random);
-  const rows = buildSpans(world.depth, config, random);
-  const occupied = rows.map(() => columns.map(() => false));
+  const districtConfig: PlotLayoutConfig = {
+    ...config,
+    sideLengthOptions: config.districtSideLengthOptions
+  };
+  const plotConfig: PlotLayoutConfig = {
+    ...config,
+    marginBlocks: 0
+  };
+  const districtColumns = buildSpans(world.width, districtConfig, random);
+  const districtRows = buildSpans(world.depth, districtConfig, random);
   const plots: Plot[] = [];
+  const pathRects: PlotPathRect[] = [];
 
-  for (let row = 0; row < rows.length; row += 1) {
-    for (let column = 0; column < columns.length; column += 1) {
-      if (occupied[row][column]) continue;
+  addPathRectsAroundSpans(pathRects, districtRows, 0, world.width, 0, world.depth, "z");
+  for (const districtRow of districtRows) {
+    addPathRectsAroundSpans(pathRects, districtColumns, districtRow.start, districtRow.size, 0, world.width, "x");
+  }
 
-      const canMergeColumn = column + 1 < columns.length && !occupied[row][column + 1];
-      const columnSpan = canMergeColumn && random() < config.mergeChance ? 2 : 1;
-      const canMergeRow =
-        row + 1 < rows.length &&
-        columns.slice(column, column + columnSpan).every((_span, offset) => !occupied[row + 1][column + offset]);
-      const rowSpan = canMergeRow && random() < config.mergeChance ? 2 : 1;
+  for (const districtRow of districtRows) {
+    for (const districtColumn of districtColumns) {
+      const splitRowsFirst = random() < 0.5;
 
-      for (let z = row; z < row + rowSpan; z += 1) {
-        for (let x = column; x < column + columnSpan; x += 1) {
-          occupied[z][x] = true;
+      if (splitRowsFirst) {
+        const localRows = buildSpans(districtRow.size, plotConfig, random);
+        addPathRectsAroundSpans(
+          pathRects,
+          localRows,
+          districtColumn.start,
+          districtColumn.size,
+          districtRow.start,
+          districtRow.size,
+          "z"
+        );
+
+        for (const localRow of localRows) {
+          const localColumns = buildSpans(districtColumn.size, plotConfig, random);
+          addPathRectsAroundSpans(
+            pathRects,
+            localColumns,
+            districtRow.start + localRow.start,
+            localRow.size,
+            districtColumn.start,
+            districtColumn.size,
+            "x"
+          );
+
+          for (const localColumn of localColumns) {
+            plots.push(
+              makePlot(
+                `plot-${plots.length + 1}`,
+                { start: districtColumn.start + localColumn.start, size: localColumn.size },
+                { start: districtRow.start + localRow.start, size: localRow.size }
+              )
+            );
+          }
+        }
+      } else {
+        const localColumns = buildSpans(districtColumn.size, plotConfig, random);
+        addPathRectsAroundSpans(
+          pathRects,
+          localColumns,
+          districtRow.start,
+          districtRow.size,
+          districtColumn.start,
+          districtColumn.size,
+          "x"
+        );
+
+        for (const localColumn of localColumns) {
+          const localRows = buildSpans(districtRow.size, plotConfig, random);
+          addPathRectsAroundSpans(
+            pathRects,
+            localRows,
+            districtColumn.start + localColumn.start,
+            localColumn.size,
+            districtRow.start,
+            districtRow.size,
+            "z"
+          );
+
+          for (const localRow of localRows) {
+            plots.push(
+              makePlot(
+                `plot-${plots.length + 1}`,
+                { start: districtColumn.start + localColumn.start, size: localColumn.size },
+                { start: districtRow.start + localRow.start, size: localRow.size }
+              )
+            );
+          }
         }
       }
-
-      plots.push(makePlot(`plot-${plots.length + 1}`, columns, rows, column, row, columnSpan, rowSpan));
     }
   }
 
@@ -159,6 +303,7 @@ export const generatePlotLayout = (
 
   return {
     plots,
+    pathRects,
     config,
     stats: {
       plotCount: plots.length,
