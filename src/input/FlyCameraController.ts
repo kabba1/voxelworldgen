@@ -70,6 +70,14 @@ export class FlyCameraController {
     return this.pointerLocked;
   }
 
+  lookAt(target: THREE.Vector3) {
+    const direction = target.clone().sub(this.camera.position).normalize();
+    this.yaw = Math.atan2(-direction.x, -direction.z);
+    this.pitch = Math.asin(direction.y);
+    this.pitch = Math.max(-Math.PI / 2 + 0.03, Math.min(Math.PI / 2 - 0.03, this.pitch));
+    this.applyRotation();
+  }
+
   private onKeyDown = (event: KeyboardEvent) => {
     this.keys[event.code] = true;
   };

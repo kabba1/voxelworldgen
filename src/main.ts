@@ -2,57 +2,25 @@ import * as THREE from "three";
 import "./styles.css";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { FlyCameraController } from "./input/FlyCameraController";
-import { DEFAULT_MESH_SAMPLE_STEP, buildHeightmapTerrain } from "./render/terrainMesh";
-import { loadHeightmapData } from "./world/heightmapLoader";
-import { HEIGHTMAP_WORLD_CONFIG, HeightmapWorld } from "./world/heightmapWorld";
+import { buildFlatTerrain } from "./render/terrainMesh";
+import { FlatWorld } from "./world/flatWorld";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 
-const TERRAIN_MESH_MODES = {
-  preview: 8,
-  detail: 4,
-  close: 2,
-  exact: 1
-} as const;
-
-type TerrainMeshMode = keyof typeof TERRAIN_MESH_MODES;
-
-const modeForStep = (step: number): TerrainMeshMode | "custom" => {
-  const entry = Object.entries(TERRAIN_MESH_MODES).find(([, value]) => value === step);
-  return entry ? (entry[0] as TerrainMeshMode) : "custom";
-};
-
-const resolveMeshSettings = () => {
-  const params = new URLSearchParams(window.location.search);
-  const requested = params.get("mesh") ?? params.get("meshStep") ?? "preview";
-  const normalized = requested.trim().toLowerCase();
-
-  if (normalized in TERRAIN_MESH_MODES) {
-    const mode = normalized as TerrainMeshMode;
-    return { mode, step: TERRAIN_MESH_MODES[mode] };
-  }
-
-  const numericStep = Number.parseInt(normalized, 10);
-  if ([1, 2, 4, 8].includes(numericStep)) {
-    return { mode: modeForStep(numericStep), step: numericStep };
-  }
-
-  console.warn(`Unsupported mesh mode "${requested}". Falling back to preview.`);
-  return { mode: "preview" as const, step: DEFAULT_MESH_SAMPLE_STEP };
-};
+const world = new FlatWorld();
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x93cdea);
-scene.fog = new THREE.Fog(0x93cdea, 450, 1500);
+scene.fog = new THREE.Fog(0x93cdea, 900, 1800);
 
-const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 1800);
+const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 2600);
 
 const renderer = new THREE.WebGLRenderer({
   antialias: false,
   powerPreference: "high-performance"
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setPixelRatio(1);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.domElement.tabIndex = 0;
@@ -68,7 +36,7 @@ scene.add(sun);
 
 const hint = document.createElement("div");
 hint.className = "hint";
-hint.textContent = "Loading heightmap terrain...";
+hint.textContent = "Loading flatworld...";
 document.body.appendChild(hint);
 
 const crosshair = document.createElement("div");
@@ -97,7 +65,6 @@ renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
 let controller: FlyCameraController | null = null;
 let stats: StatsOverlay | null = null;
 let lastTime = performance.now();
-const meshSettings = resolveMeshSettings();
 
 const dispose = () => {
   controller?.dispose();
@@ -108,26 +75,19 @@ const dispose = () => {
   renderer.dispose();
 };
 
-const start = async () => {
-  const heightmap = await loadHeightmapData({
-    targetWidth: HEIGHTMAP_WORLD_CONFIG.width,
-    targetDepth: HEIGHTMAP_WORLD_CONFIG.depth,
-    maxTerrainHeight: HEIGHTMAP_WORLD_CONFIG.maxTerrainHeight
-  });
-  const world = new HeightmapWorld(heightmap);
-  const { group: terrain, stats: worldStats } = buildHeightmapTerrain(world, {
-    meshMode: meshSettings.mode,
-    meshStep: meshSettings.step
-  });
-
+const start = () => {
+  const { group: terrain, stats: worldStats } = buildFlatTerrain(world);
   scene.add(terrain);
 
-  camera.position.set(-180, world.worldHeight() + 78, 260);
+  const target = new THREE.Vector3(0, world.worldHeight(), 0);
+  camera.position.set(-120, world.worldHeight() + 96, 180);
   controller = new FlyCameraController(camera, renderer.domElement);
-  controller.moveSpeed = 78;
+  controller.moveSpeed = 96;
+  controller.lookAt(target);
 
   stats = new StatsOverlay(renderer, camera, controller, worldStats);
-  hint.textContent = `Click to look. WASD moves, Space rises, C/Ctrl lowers, Shift sprints. Mesh ${meshSettings.mode}: ${meshSettings.step}.`;
+  hint.textContent =
+    "Click to look. WASD moves, Space rises, C/Ctrl lowers, Shift sprints. 4000x4000 flatworld: 50 stone, 10 dirt, 1 grass.";
 
   renderer.setAnimationLoop((time) => {
     const deltaSeconds = Math.min(0.05, (time - lastTime) / 1000);
@@ -139,10 +99,5 @@ const start = async () => {
   });
 };
 
-start().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "Unknown heightmap error.";
-  hint.textContent = `Could not load heightmap terrain: ${message}`;
-  console.error(error);
-});
-
+start();
 window.addEventListener("beforeunload", dispose);
