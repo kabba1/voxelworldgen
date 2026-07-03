@@ -2,12 +2,45 @@ import * as THREE from "three";
 import "./styles.css";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { FlyCameraController } from "./input/FlyCameraController";
-import { buildHeightmapTerrain } from "./render/terrainMesh";
+import { DEFAULT_MESH_SAMPLE_STEP, buildHeightmapTerrain } from "./render/terrainMesh";
 import { loadHeightmapData } from "./world/heightmapLoader";
 import { HEIGHTMAP_WORLD_CONFIG, HeightmapWorld } from "./world/heightmapWorld";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
+
+const TERRAIN_MESH_MODES = {
+  preview: 8,
+  detail: 4,
+  close: 2,
+  exact: 1
+} as const;
+
+type TerrainMeshMode = keyof typeof TERRAIN_MESH_MODES;
+
+const modeForStep = (step: number): TerrainMeshMode | "custom" => {
+  const entry = Object.entries(TERRAIN_MESH_MODES).find(([, value]) => value === step);
+  return entry ? (entry[0] as TerrainMeshMode) : "custom";
+};
+
+const resolveMeshSettings = () => {
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("mesh") ?? params.get("meshStep") ?? "preview";
+  const normalized = requested.trim().toLowerCase();
+
+  if (normalized in TERRAIN_MESH_MODES) {
+    const mode = normalized as TerrainMeshMode;
+    return { mode, step: TERRAIN_MESH_MODES[mode] };
+  }
+
+  const numericStep = Number.parseInt(normalized, 10);
+  if ([1, 2, 4, 8].includes(numericStep)) {
+    return { mode: modeForStep(numericStep), step: numericStep };
+  }
+
+  console.warn(`Unsupported mesh mode "${requested}". Falling back to preview.`);
+  return { mode: "preview" as const, step: DEFAULT_MESH_SAMPLE_STEP };
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x93cdea);
@@ -64,6 +97,7 @@ renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
 let controller: FlyCameraController | null = null;
 let stats: StatsOverlay | null = null;
 let lastTime = performance.now();
+const meshSettings = resolveMeshSettings();
 
 const dispose = () => {
   controller?.dispose();
@@ -81,7 +115,10 @@ const start = async () => {
     maxTerrainHeight: HEIGHTMAP_WORLD_CONFIG.maxTerrainHeight
   });
   const world = new HeightmapWorld(heightmap);
-  const { group: terrain, stats: worldStats } = buildHeightmapTerrain(world);
+  const { group: terrain, stats: worldStats } = buildHeightmapTerrain(world, {
+    meshMode: meshSettings.mode,
+    meshStep: meshSettings.step
+  });
 
   scene.add(terrain);
 
@@ -90,7 +127,7 @@ const start = async () => {
   controller.moveSpeed = 78;
 
   stats = new StatsOverlay(renderer, camera, controller, worldStats);
-  hint.textContent = "Click to look. WASD moves, Space rises, C/Ctrl lowers, Shift sprints. Heightmap terrain from public/heightmap.png.";
+  hint.textContent = `Click to look. WASD moves, Space rises, C/Ctrl lowers, Shift sprints. Mesh ${meshSettings.mode}: ${meshSettings.step}.`;
 
   renderer.setAnimationLoop((time) => {
     const deltaSeconds = Math.min(0.05, (time - lastTime) / 1000);

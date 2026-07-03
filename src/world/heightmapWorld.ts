@@ -28,6 +28,7 @@ export type HeightmapWorldStats = {
   chunkSize: number;
   chunkColumns: number;
   meshStep: number;
+  meshMode: string;
   generatedChunks: number;
   triangles: number;
   borderMin: number;

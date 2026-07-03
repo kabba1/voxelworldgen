@@ -52,7 +52,7 @@ export class StatsOverlay {
       `border ${this.worldStats.borderMin}..${this.worldStats.borderMax}`,
       `max height ${this.worldStats.maxTerrainHeight} blocks`,
       `block size ${this.worldStats.blockSize}`,
-      `mesh step ${this.worldStats.meshStep} blocks`,
+      `mesh step ${this.worldStats.meshStep} blocks (${this.worldStats.meshMode})`,
       `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
       `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
       `source ${this.worldStats.usedFallback ? "fallback" : this.worldStats.loadedFrom}`,

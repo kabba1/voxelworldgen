@@ -7,6 +7,11 @@ export type TerrainBuildResult = {
   stats: HeightmapWorldStats;
 };
 
+export type TerrainMeshOptions = {
+  meshStep?: number;
+  meshMode?: string;
+};
+
 type MeshBuffers = {
   positions: number[];
   colors: number[];
@@ -14,7 +19,8 @@ type MeshBuffers = {
 };
 
 const color = new THREE.Color();
-const SURFACE_SAMPLE_STEP = 8;
+export const DEFAULT_MESH_SAMPLE_STEP = 8;
+const ALLOWED_MESH_SAMPLE_STEPS = new Set([1, 2, 4, 8]);
 
 const worldX = (world: HeightmapWorld, x: number) => (x - world.width / 2) * world.blockSize;
 const worldY = (world: HeightmapWorld, y: number) => y * world.blockSize;
@@ -166,7 +172,8 @@ const pushHeightmapChunk = (
   material: THREE.Material,
   world: HeightmapWorld,
   chunkX: number,
-  chunkZ: number
+  chunkZ: number,
+  meshStep: number
 ) => {
   const minX = chunkX * world.chunkSize;
   const minZ = chunkZ * world.chunkSize;
@@ -179,19 +186,19 @@ const pushHeightmapChunk = (
   };
   let triangles = 0;
 
-  for (let z = minZ; z < maxZ; z += SURFACE_SAMPLE_STEP) {
-    for (let x = minX; x < maxX; x += SURFACE_SAMPLE_STEP) {
-      const x1 = Math.min(x + SURFACE_SAMPLE_STEP, world.width);
-      const z1 = Math.min(z + SURFACE_SAMPLE_STEP, world.depth);
+  for (let z = minZ; z < maxZ; z += meshStep) {
+    for (let x = minX; x < maxX; x += meshStep) {
+      const x1 = Math.min(x + meshStep, world.width);
+      const z1 = Math.min(z + meshStep, world.depth);
       const columnX = clampColumnX(world, x);
       const columnZ = clampColumnZ(world, z);
       const columnHeight = world.heightAt(columnX, columnZ);
 
       triangles += pushTopFace(buffers, world, x, x1, z, z1, columnHeight, world.surfaceBlockAt(columnX, columnZ));
       triangles += pushColumnSide(buffers, world, "east", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x1, z), columnHeight);
-      triangles += pushColumnSide(buffers, world, "west", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x - SURFACE_SAMPLE_STEP, z), columnHeight);
+      triangles += pushColumnSide(buffers, world, "west", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x - meshStep, z), columnHeight);
       triangles += pushColumnSide(buffers, world, "south", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x, z1), columnHeight);
-      triangles += pushColumnSide(buffers, world, "north", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x, z - SURFACE_SAMPLE_STEP), columnHeight);
+      triangles += pushColumnSide(buffers, world, "north", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x, z - meshStep), columnHeight);
     }
   }
 
@@ -202,9 +209,16 @@ const pushHeightmapChunk = (
   return triangles;
 };
 
-export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult => {
+const sanitizeMeshStep = (meshStep = DEFAULT_MESH_SAMPLE_STEP) => {
+  if (ALLOWED_MESH_SAMPLE_STEPS.has(meshStep)) return meshStep;
+  console.warn(`Unsupported terrain mesh step "${meshStep}". Falling back to ${DEFAULT_MESH_SAMPLE_STEP}.`);
+  return DEFAULT_MESH_SAMPLE_STEP;
+};
+
+export const buildHeightmapTerrain = (world: HeightmapWorld, options: TerrainMeshOptions = {}): TerrainBuildResult => {
   const group = new THREE.Group();
   group.name = "heightmap-terrain";
+  const meshStep = sanitizeMeshStep(options.meshStep);
 
   const material = new THREE.MeshLambertMaterial({
     flatShading: true,
@@ -217,7 +231,7 @@ export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult
 
   for (let chunkZ = 0; chunkZ < chunksZ; chunkZ += 1) {
     for (let chunkX = 0; chunkX < chunksX; chunkX += 1) {
-      terrainTriangles += pushHeightmapChunk(group, material, world, chunkX, chunkZ);
+      terrainTriangles += pushHeightmapChunk(group, material, world, chunkX, chunkZ, meshStep);
     }
   }
 
@@ -236,7 +250,8 @@ export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult
       blockSize: world.blockSize,
       chunkSize: world.chunkSize,
       chunkColumns: world.chunkColumns,
-      meshStep: SURFACE_SAMPLE_STEP,
+      meshStep,
+      meshMode: options.meshMode ?? "preview",
       generatedChunks: group.children.length,
       triangles: terrainTriangles,
       borderMin: world.borderMin,
