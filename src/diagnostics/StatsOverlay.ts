@@ -1,5 +1,6 @@
 import type * as THREE from "three";
 import type { FlatWorldStats } from "../world/flatWorld";
+import type { PlotLayoutStats } from "../world/plots";
 import type { FlyCameraController } from "../input/FlyCameraController";
 
 export class StatsOverlay {
@@ -14,7 +15,8 @@ export class StatsOverlay {
     private readonly renderer: THREE.WebGLRenderer,
     private readonly camera: THREE.PerspectiveCamera,
     private readonly controller: FlyCameraController,
-    private readonly worldStats: FlatWorldStats
+    private readonly worldStats: FlatWorldStats,
+    private readonly plotStats: PlotLayoutStats
   ) {
     this.element = document.createElement("div");
     this.element.className = "stats";
@@ -55,6 +57,9 @@ export class StatsOverlay {
       `mesh ${this.worldStats.meshMode}`,
       `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
       `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
+      `plots ${this.plotStats.plotCount} | sep ${this.plotStats.separatorBlocks}`,
+      `plot sizes ${this.plotStats.smallPlots}/${this.plotStats.mediumPlots}/${this.plotStats.largePlots}`,
+      `plot cover ${(this.plotStats.coverageRatio * 100).toFixed(1)}% | outline tris ${this.plotStats.outlineTriangles.toLocaleString()}`,
       `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`,
       `mouse ${this.controller.isPointerLocked() ? "locked" : "click to look"}`
     ].join("<br />");

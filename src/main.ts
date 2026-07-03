@@ -2,8 +2,10 @@ import * as THREE from "three";
 import "./styles.css";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { FlyCameraController } from "./input/FlyCameraController";
+import { buildPlotOutlines } from "./render/plotOutlines";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { FlatWorld } from "./world/flatWorld";
+import { generatePlotLayout } from "./world/plots";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
@@ -33,15 +35,6 @@ scene.add(new THREE.HemisphereLight(0xdff5ff, 0x6d5a46, 1.85));
 const sun = new THREE.DirectionalLight(0xffffff, 2.4);
 sun.position.set(260, 520, 180);
 scene.add(sun);
-
-const hint = document.createElement("div");
-hint.className = "hint";
-hint.textContent = "Loading flatworld...";
-document.body.appendChild(hint);
-
-const crosshair = document.createElement("div");
-crosshair.className = "crosshair";
-document.body.appendChild(crosshair);
 
 const onResize = () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -79,15 +72,18 @@ const start = () => {
   const { group: terrain, stats: worldStats } = buildFlatTerrain(world);
   scene.add(terrain);
 
+  const plotLayout = generatePlotLayout(world);
+  const { group: plotOutlines, triangles: plotOutlineTriangles } = buildPlotOutlines(world, plotLayout);
+  scene.add(plotOutlines);
+  const plotStats = { ...plotLayout.stats, outlineTriangles: plotOutlineTriangles };
+
   const target = new THREE.Vector3(0, world.worldHeight(), 0);
   camera.position.set(-120, world.worldHeight() + 96, 180);
   controller = new FlyCameraController(camera, renderer.domElement);
   controller.moveSpeed = 96;
   controller.lookAt(target);
 
-  stats = new StatsOverlay(renderer, camera, controller, worldStats);
-  hint.textContent =
-    "Click to look. WASD moves, Space rises, C/Ctrl lowers, Shift sprints. 4000x4000 flatworld: 50 stone, 10 dirt, 1 grass.";
+  stats = new StatsOverlay(renderer, camera, controller, worldStats, plotStats);
 
   renderer.setAnimationLoop((time) => {
     const deltaSeconds = Math.min(0.05, (time - lastTime) / 1000);
