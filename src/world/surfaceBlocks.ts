@@ -30,14 +30,24 @@ export const buildSurfaceBlockMap = (world: FlatWorld, layout: PlotLayout): Surf
     z1: plot.z + plot.depth,
     blockId: BLOCKS.grass
   }));
-  const rects = [...pathRects, ...plotRects];
+  const publicOpenSpaceRects = layout.publicOpenSpaces.map((openSpace): SurfaceBlockRect => ({
+    x0: openSpace.x,
+    z0: openSpace.z,
+    x1: openSpace.x + openSpace.width,
+    z1: openSpace.z + openSpace.depth,
+    blockId: BLOCKS.grass
+  }));
+  const grassRects = [...publicOpenSpaceRects, ...plotRects];
+  const rects = [...pathRects, ...grassRects];
 
   return {
     rects,
     blockAt: (x, z) => {
       if (!world.containsColumn(x, z)) return BLOCKS.grass;
-      const rect = rects.find((candidate) => x >= candidate.x0 && x < candidate.x1 && z >= candidate.z0 && z < candidate.z1);
-      return rect?.blockId ?? BLOCKS.path;
+      const grassRect = grassRects.find((candidate) => x >= candidate.x0 && x < candidate.x1 && z >= candidate.z0 && z < candidate.z1);
+      if (grassRect) return BLOCKS.grass;
+      const pathRect = pathRects.find((candidate) => x >= candidate.x0 && x < candidate.x1 && z >= candidate.z0 && z < candidate.z1);
+      return pathRect?.blockId ?? BLOCKS.path;
     }
   };
 };

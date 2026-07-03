@@ -24,6 +24,16 @@ export type PlotPathRect = {
   depth: number;
 };
 
+export type PublicOpenSpace = {
+  id: string;
+  districtId: string;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  area: number;
+};
+
 export type DistrictBlock = {
   id: string;
   x: number;
@@ -47,6 +57,8 @@ export type PlotLayoutStats = {
   mediumDistricts: number;
   sparseDistricts: number;
   civicDistricts: number;
+  publicOpenSpaceCount: number;
+  publicOpenSpaceArea: number;
   plotCount: number;
   smallPlots: number;
   mediumPlots: number;
@@ -62,6 +74,7 @@ export type PlotLayout = {
   districts: DistrictBlock[];
   plots: Plot[];
   pathRects: PlotPathRect[];
+  publicOpenSpaces: PublicOpenSpace[];
   config: PlotLayoutConfig;
   stats: PlotLayoutStats;
 };
@@ -150,6 +163,10 @@ const pickWeightedSize = (values: readonly WeightedSize[], random: () => number)
   return values[values.length - 1]?.size;
 };
 
+const snapDown = (value: number, step = 10) => Math.max(step, Math.floor(value / step) * step);
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
 const chooseDistrictStyle = (random: () => number): DistrictSubdivisionStyle => {
   let cursor = random() * DISTRICT_STYLE_WEIGHTS.reduce((sum, entry) => sum + entry.weight, 0);
   for (const entry of DISTRICT_STYLE_WEIGHTS) {
@@ -196,10 +213,12 @@ const buildSpans = (
   weightedSizes: readonly WeightedSize[] = asWeightedSizes(config.sideLengthOptions)
 ): Span[] => {
   const spans: Span[] = [];
-  const count = findSpanCount(total, config, weightedSizes);
   const sizes = weightedSizes.map((entry) => entry.size);
   const minSize = Math.min(...sizes);
   const maxSize = Math.max(...sizes);
+  if (total - config.marginBlocks * 2 < minSize) return spans;
+
+  const count = findSpanCount(total, config, weightedSizes);
   let remainingSizeSum = total - config.marginBlocks * 2 - config.separatorBlocks * (count - 1);
   let cursor = config.marginBlocks;
 
@@ -256,6 +275,16 @@ const makeDistrict = (id: string, column: Span, row: Span, style: DistrictSubdiv
   style
 });
 
+const makePublicOpenSpace = (id: string, district: DistrictBlock, x: number, z: number, width: number, depth: number): PublicOpenSpace => ({
+  id,
+  districtId: district.id,
+  x,
+  z,
+  width,
+  depth,
+  area: width * depth
+});
+
 const shouldSplitRowsFirst = (style: DistrictSubdivisionStyle, random: () => number) => {
   switch (style) {
     case "dense-small-lots":
@@ -277,6 +306,81 @@ const makePathRect = (x: number, z: number, width: number, depth: number): PlotP
 const pushPathRect = (pathRects: PlotPathRect[], x: number, z: number, width: number, depth: number) => {
   const rect = makePathRect(x, z, width, depth);
   if (rect) pathRects.push(rect);
+};
+
+const addPlotsInRect = (
+  rect: PlotPathRect,
+  district: DistrictBlock,
+  plotConfig: PlotLayoutConfig,
+  weightedSizes: readonly WeightedSize[],
+  random: () => number,
+  plots: Plot[],
+  pathRects: PlotPathRect[]
+) => {
+  const localRows = buildSpans(rect.depth, plotConfig, random, weightedSizes);
+  addPathRectsAroundSpans(pathRects, localRows, rect.x, rect.width, rect.z, rect.depth, "z");
+
+  for (const localRow of localRows) {
+    const localColumns = buildSpans(rect.width, plotConfig, random, weightedSizes);
+    addPathRectsAroundSpans(pathRects, localColumns, rect.z + localRow.start, localRow.size, rect.x, rect.width, "x");
+
+    for (const localColumn of localColumns) {
+      plots.push(
+        makePlot(
+          `plot-${plots.length + 1}`,
+          district,
+          { start: rect.x + localColumn.start, size: localColumn.size },
+          { start: rect.z + localRow.start, size: localRow.size }
+        )
+      );
+    }
+  }
+};
+
+const addCivicOpenDistrict = (
+  district: DistrictBlock,
+  plotConfig: PlotLayoutConfig,
+  random: () => number,
+  plots: Plot[],
+  pathRects: PlotPathRect[],
+  publicOpenSpaces: PublicOpenSpace[]
+) => {
+  const ring = plotConfig.separatorBlocks;
+  const edgeDepth = pickWeightedSize([{ size: 40, weight: 1 }, { size: 50, weight: 2 }], random) ?? 50;
+  const maxOpenWidth = Math.max(60, district.width - edgeDepth * 2 - ring * 2);
+  const maxOpenDepth = Math.max(60, district.depth - edgeDepth * 2 - ring * 2);
+  const openWidth = snapDown(clamp(district.width * (0.5 + random() * 0.18), 80, maxOpenWidth));
+  const openDepth = snapDown(clamp(district.depth * (0.5 + random() * 0.18), 80, maxOpenDepth));
+  const openX = district.x + snapDown((district.width - openWidth) / 2, 5);
+  const openZ = district.z + snapDown((district.depth - openDepth) / 2, 5);
+
+  publicOpenSpaces.push(makePublicOpenSpace(`open-${publicOpenSpaces.length + 1}`, district, openX, openZ, openWidth, openDepth));
+
+  pushPathRect(pathRects, openX - ring, openZ - ring, openWidth + ring * 2, ring);
+  pushPathRect(pathRects, openX - ring, openZ + openDepth, openWidth + ring * 2, ring);
+  pushPathRect(pathRects, openX - ring, openZ, ring, openDepth);
+  pushPathRect(pathRects, openX + openWidth, openZ, ring, openDepth);
+
+  const bands: PlotPathRect[] = [
+    { x: district.x, z: district.z, width: district.width, depth: openZ - ring - district.z },
+    {
+      x: district.x,
+      z: openZ + openDepth + ring,
+      width: district.width,
+      depth: district.z + district.depth - (openZ + openDepth + ring)
+    },
+    { x: district.x, z: openZ - ring, width: openX - ring - district.x, depth: openDepth + ring * 2 },
+    {
+      x: openX + openWidth + ring,
+      z: openZ - ring,
+      width: district.x + district.width - (openX + openWidth + ring),
+      depth: openDepth + ring * 2
+    }
+  ].filter((band) => band.width > 0 && band.depth > 0);
+
+  for (const band of bands) {
+    addPlotsInRect(band, district, plotConfig, STYLE_SIZE_WEIGHTS["civic-open-block"], random, plots, pathRects);
+  }
 };
 
 const addPathRectsAroundSpans = (
@@ -330,6 +434,7 @@ export const generatePlotLayout = (
   const districts: DistrictBlock[] = [];
   const plots: Plot[] = [];
   const pathRects: PlotPathRect[] = [];
+  const publicOpenSpaces: PublicOpenSpace[] = [];
 
   addPathRectsAroundSpans(pathRects, districtRows, 0, world.width, 0, world.depth, "z");
   for (const districtRow of districtRows) {
@@ -342,6 +447,11 @@ export const generatePlotLayout = (
       const localWeightedSizes = STYLE_SIZE_WEIGHTS[district.style];
       const splitRowsFirst = shouldSplitRowsFirst(district.style, random);
       districts.push(district);
+
+      if (district.style === "civic-open-block") {
+        addCivicOpenDistrict(district, plotConfig, random, plots, pathRects, publicOpenSpaces);
+        continue;
+      }
 
       if (splitRowsFirst) {
         const localRows = buildSpans(district.depth, plotConfig, random, localWeightedSizes);
@@ -426,11 +536,13 @@ export const generatePlotLayout = (
   const mediumDistricts = districts.filter((district) => district.style === "medium-mixed-lots").length;
   const sparseDistricts = districts.filter((district) => district.style === "sparse-large-lots").length;
   const civicDistricts = districts.filter((district) => district.style === "civic-open-block").length;
+  const publicOpenSpaceArea = publicOpenSpaces.reduce((sum, openSpace) => sum + openSpace.area, 0);
 
   return {
     districts,
     plots,
     pathRects,
+    publicOpenSpaces,
     config,
     stats: {
       districtCount: districts.length,
@@ -438,6 +550,8 @@ export const generatePlotLayout = (
       mediumDistricts,
       sparseDistricts,
       civicDistricts,
+      publicOpenSpaceCount: publicOpenSpaces.length,
+      publicOpenSpaceArea,
       plotCount: plots.length,
       smallPlots,
       mediumPlots,
