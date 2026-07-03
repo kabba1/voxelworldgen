@@ -4,5 +4,7 @@ dist/
 .env
 .env.*
 .vite/
+test-results/
+playwright-report/
 .DS_Store
 Thumbs.db

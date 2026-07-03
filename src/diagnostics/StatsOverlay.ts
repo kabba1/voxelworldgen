@@ -1,5 +1,5 @@
 import type * as THREE from "three";
-import type { FlatWorldStats } from "../world/flatWorld";
+import type { HeightmapWorldStats } from "../world/heightmapWorld";
 import type { FlyCameraController } from "../input/FlyCameraController";
 
 export class StatsOverlay {
@@ -14,7 +14,7 @@ export class StatsOverlay {
     private readonly renderer: THREE.WebGLRenderer,
     private readonly camera: THREE.PerspectiveCamera,
     private readonly controller: FlyCameraController,
-    private readonly worldStats: FlatWorldStats
+    private readonly worldStats: HeightmapWorldStats
   ) {
     this.element = document.createElement("div");
     this.element.className = "stats";
@@ -47,11 +47,15 @@ export class StatsOverlay {
       `fps ${this.fps.toFixed(0)} | frame ${this.frameMs.toFixed(1)}ms`,
       `draws ${renderInfo.calls} | tris ${renderInfo.triangles.toLocaleString()}`,
       `geometries ${memoryInfo.geometries} | textures ${memoryInfo.textures}`,
-      `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
-      `visible faces ${this.worldStats.exposedFaces.toLocaleString()}`,
-      `blocks ${this.worldStats.width}x${this.worldStats.depth}x${this.worldStats.height}`,
-      `total blocks ${this.worldStats.totalBlocks.toLocaleString()}`,
+      `heightmap ${this.worldStats.heightmapSourceWidth}x${this.worldStats.heightmapSourceHeight} -> ${this.worldStats.heightmapWidth}x${this.worldStats.heightmapDepth}`,
+      `world ${this.worldStats.width}x${this.worldStats.depth} blocks`,
+      `border ${this.worldStats.borderMin}..${this.worldStats.borderMax}`,
+      `max height ${this.worldStats.maxTerrainHeight} blocks`,
       `block size ${this.worldStats.blockSize}`,
+      `mesh step ${this.worldStats.meshStep} blocks`,
+      `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
+      `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
+      `source ${this.worldStats.usedFallback ? "fallback" : this.worldStats.loadedFrom}`,
       `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`,
       `mouse ${this.controller.isPointerLocked() ? "locked" : "click to look"}`
     ].join("<br />");
