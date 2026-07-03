@@ -1,13 +1,14 @@
-export type BlockId = 0 | 1 | 2 | 3;
+export type BlockId = 0 | 1 | 2 | 3 | 4;
 
 export const BLOCKS = {
   air: 0,
   stone: 1,
   dirt: 2,
-  grass: 3
+  grass: 3,
+  path: 4
 } as const satisfies Record<string, BlockId>;
 
-export type SolidBlockId = typeof BLOCKS.stone | typeof BLOCKS.dirt | typeof BLOCKS.grass;
+export type SolidBlockId = typeof BLOCKS.stone | typeof BLOCKS.dirt | typeof BLOCKS.grass | typeof BLOCKS.path;
 
 export type BlockDefinition = {
   id: SolidBlockId;
@@ -30,6 +31,11 @@ export const BLOCK_DEFINITIONS: Record<SolidBlockId, BlockDefinition> = {
     id: BLOCKS.grass,
     name: "Grass",
     color: 0x4f9d45
+  },
+  [BLOCKS.path]: {
+    id: BLOCKS.path,
+    name: "Path",
+    color: 0x8d8064
   }
 };
 

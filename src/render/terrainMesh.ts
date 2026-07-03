@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { BLOCKS, colorForBlock, type SolidBlockId } from "../world/blocks";
+import { BLOCKS } from "../world/blocks";
 import { FlatWorld, type FlatWorldStats } from "../world/flatWorld";
+import type { TerrainMaterials } from "./terrainMaterials";
 
 export type TerrainBuildResult = {
   group: THREE.Group;
@@ -10,45 +11,49 @@ export type TerrainBuildResult = {
 type MeshBuffers = {
   positions: number[];
   normals: number[];
-  colors: number[];
+  uvs: number[];
   indices: number[];
 };
 
 type Normal = [number, number, number];
-
-const color = new THREE.Color();
+type Vertex = [x: number, y: number, z: number, u: number, v: number];
 
 const worldX = (world: FlatWorld, x: number) => (x - world.width / 2) * world.blockSize;
 const worldY = (world: FlatWorld, y: number) => y * world.blockSize;
 const worldZ = (world: FlatWorld, z: number) => (z - world.depth / 2) * world.blockSize;
 
-const pushVertex = (
-  buffers: MeshBuffers,
-  world: FlatWorld,
-  x: number,
-  y: number,
-  z: number,
-  blockId: SolidBlockId,
-  normal: Normal
-) => {
+const createBuffers = (): MeshBuffers => ({
+  positions: [],
+  normals: [],
+  uvs: [],
+  indices: []
+});
+
+const pushVertex = (buffers: MeshBuffers, world: FlatWorld, vertex: Vertex, normal: Normal) => {
+  const [x, y, z, u, v] = vertex;
   buffers.positions.push(worldX(world, x), worldY(world, y), worldZ(world, z));
   buffers.normals.push(normal[0], normal[1], normal[2]);
-  color.set(colorForBlock(blockId));
-  buffers.colors.push(color.r, color.g, color.b);
+  buffers.uvs.push(u, v);
 };
 
-const pushQuad = (
-  buffers: MeshBuffers,
-  world: FlatWorld,
-  corners: Array<[number, number, number]>,
-  blockId: SolidBlockId,
-  normal: Normal
-) => {
+const pushQuad = (buffers: MeshBuffers, world: FlatWorld, corners: Vertex[], normal: Normal) => {
   const start = buffers.positions.length / 3;
-  for (const [x, y, z] of corners) {
-    pushVertex(buffers, world, x, y, z, blockId, normal);
-  }
+  for (const corner of corners) pushVertex(buffers, world, corner, normal);
   buffers.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
+};
+
+const createTerrainMesh = (name: string, buffers: MeshBuffers, material: THREE.Material) => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(buffers.positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(buffers.normals, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buffers.uvs, 2));
+  geometry.setIndex(buffers.indices);
+  geometry.computeBoundingSphere();
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = name;
+  mesh.frustumCulled = false;
+  return mesh;
 };
 
 const pushWorldTop = (buffers: MeshBuffers, world: FlatWorld) => {
@@ -57,12 +62,11 @@ const pushWorldTop = (buffers: MeshBuffers, world: FlatWorld) => {
     buffers,
     world,
     [
-      [0, y, world.depth],
-      [world.width, y, world.depth],
-      [world.width, y, 0],
-      [0, y, 0]
+      [0, y, world.depth, 0, world.depth],
+      [world.width, y, world.depth, world.width, world.depth],
+      [world.width, y, 0, world.width, 0],
+      [0, y, 0, 0, 0]
     ],
-    BLOCKS.grass,
     [0, 1, 0]
   );
 };
@@ -72,8 +76,7 @@ const pushLayeredSide = (
   world: FlatWorld,
   side: "east" | "west" | "south" | "north",
   from: number,
-  to: number,
-  blockId: SolidBlockId
+  to: number
 ) => {
   switch (side) {
     case "east":
@@ -81,12 +84,11 @@ const pushLayeredSide = (
         buffers,
         world,
         [
-          [world.width, to, 0],
-          [world.width, to, world.depth],
-          [world.width, from, world.depth],
-          [world.width, from, 0]
+          [world.width, to, 0, 0, to],
+          [world.width, to, world.depth, world.depth, to],
+          [world.width, from, world.depth, world.depth, from],
+          [world.width, from, 0, 0, from]
         ],
-        blockId,
         [1, 0, 0]
       );
       break;
@@ -95,12 +97,11 @@ const pushLayeredSide = (
         buffers,
         world,
         [
-          [0, to, world.depth],
-          [0, to, 0],
-          [0, from, 0],
-          [0, from, world.depth]
+          [0, to, world.depth, world.depth, to],
+          [0, to, 0, 0, to],
+          [0, from, 0, 0, from],
+          [0, from, world.depth, world.depth, from]
         ],
-        blockId,
         [-1, 0, 0]
       );
       break;
@@ -109,12 +110,11 @@ const pushLayeredSide = (
         buffers,
         world,
         [
-          [0, from, world.depth],
-          [world.width, from, world.depth],
-          [world.width, to, world.depth],
-          [0, to, world.depth]
+          [0, from, world.depth, 0, from],
+          [world.width, from, world.depth, world.width, from],
+          [world.width, to, world.depth, world.width, to],
+          [0, to, world.depth, 0, to]
         ],
-        blockId,
         [0, 0, 1]
       );
       break;
@@ -123,64 +123,40 @@ const pushLayeredSide = (
         buffers,
         world,
         [
-          [world.width, from, 0],
-          [0, from, 0],
-          [0, to, 0],
-          [world.width, to, 0]
+          [world.width, from, 0, world.width, from],
+          [0, from, 0, 0, from],
+          [0, to, 0, 0, to],
+          [world.width, to, 0, world.width, to]
         ],
-        blockId,
         [0, 0, -1]
       );
       break;
   }
 };
 
-const pushWorldSides = (buffers: MeshBuffers, world: FlatWorld) => {
-  const layers: Array<{ from: number; to: number; blockId: SolidBlockId }> = [
-    { from: 0, to: world.stoneDepth, blockId: BLOCKS.stone },
-    { from: world.stoneDepth, to: world.stoneDepth + world.dirtDepth, blockId: BLOCKS.dirt },
-    { from: world.stoneDepth + world.dirtDepth, to: world.height, blockId: BLOCKS.grass }
-  ];
-
+const pushWorldSideLayer = (buffers: MeshBuffers, world: FlatWorld, from: number, to: number) => {
   for (const side of ["east", "west", "south", "north"] as const) {
-    for (const layer of layers) {
-      pushLayeredSide(buffers, world, side, layer.from, layer.to, layer.blockId);
-    }
+    pushLayeredSide(buffers, world, side, from, to);
   }
 };
 
-const createTerrainMesh = (buffers: MeshBuffers, material: THREE.Material) => {
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(buffers.positions, 3));
-  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(buffers.normals, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(buffers.colors, 3));
-  geometry.setIndex(buffers.indices);
-  geometry.computeBoundingSphere();
-
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = "flatworld-terrain";
-  mesh.frustumCulled = false;
-  return mesh;
-};
-
-export const buildFlatTerrain = (world: FlatWorld): TerrainBuildResult => {
+export const buildFlatTerrain = (world: FlatWorld, materials: TerrainMaterials): TerrainBuildResult => {
   const group = new THREE.Group();
   group.name = "flatworld-terrain";
 
-  const material = new THREE.MeshLambertMaterial({
-    flatShading: true,
-    vertexColors: true
-  });
-  const buffers: MeshBuffers = {
-    positions: [],
-    normals: [],
-    colors: [],
-    indices: []
-  };
+  const grassTop = createBuffers();
+  const dirtSides = createBuffers();
+  const stoneSides = createBuffers();
 
-  pushWorldTop(buffers, world);
-  pushWorldSides(buffers, world);
-  group.add(createTerrainMesh(buffers, material));
+  pushWorldTop(grassTop, world);
+  pushWorldSideLayer(stoneSides, world, 0, world.stoneDepth);
+  pushWorldSideLayer(dirtSides, world, world.stoneDepth, world.height);
+
+  group.add(createTerrainMesh("grass-top", grassTop, materials[BLOCKS.grass]));
+  group.add(createTerrainMesh("dirt-side-layer", dirtSides, materials[BLOCKS.dirt]));
+  group.add(createTerrainMesh("stone-side-layer", stoneSides, materials[BLOCKS.stone]));
+
+  const triangles = (grassTop.indices.length + dirtSides.indices.length + stoneSides.indices.length) / 3;
 
   return {
     group,
@@ -194,10 +170,10 @@ export const buildFlatTerrain = (world: FlatWorld): TerrainBuildResult => {
       height: world.height,
       borderMin: world.borderMin,
       borderMax: world.borderMax,
-      meshMode: "flat optimized",
+      meshMode: "flat textured",
       generatedChunks: group.children.length,
       chunkColumns: 1,
-      triangles: buffers.indices.length / 3
+      triangles
     }
   };
 };
