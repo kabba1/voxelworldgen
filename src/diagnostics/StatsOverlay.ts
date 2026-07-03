@@ -66,6 +66,7 @@ export class StatsOverlay {
       `mesh ${this.worldStats.meshMode}`,
       `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
       `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
+      `districts ${this.plotStats.districtCount} | dense/mix/sparse/civic ${this.plotStats.denseDistricts}/${this.plotStats.mediumDistricts}/${this.plotStats.sparseDistricts}/${this.plotStats.civicDistricts}`,
       `plots ${this.plotStats.plotCount} | sep ${this.plotStats.separatorBlocks}`,
       `plot sizes ${this.plotStats.smallPlots}/${this.plotStats.mediumPlots}/${this.plotStats.largePlots}`,
       `plot cover ${(this.plotStats.coverageRatio * 100).toFixed(1)}% | path rects ${this.plotStats.outlineTriangles.toLocaleString()}`,

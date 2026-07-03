@@ -1,9 +1,12 @@
 import type { FlatWorld } from "./flatWorld";
 
 export type PlotSizeClass = "small" | "medium" | "large";
+export type DistrictSubdivisionStyle = "dense-small-lots" | "medium-mixed-lots" | "sparse-large-lots" | "civic-open-block";
 
 export type Plot = {
   id: string;
+  districtId: string;
+  districtStyle: DistrictSubdivisionStyle;
   x: number;
   z: number;
   width: number;
@@ -21,6 +24,15 @@ export type PlotPathRect = {
   depth: number;
 };
 
+export type DistrictBlock = {
+  id: string;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  style: DistrictSubdivisionStyle;
+};
+
 export type PlotLayoutConfig = {
   marginBlocks: number;
   separatorBlocks: number;
@@ -30,6 +42,11 @@ export type PlotLayoutConfig = {
 };
 
 export type PlotLayoutStats = {
+  districtCount: number;
+  denseDistricts: number;
+  mediumDistricts: number;
+  sparseDistricts: number;
+  civicDistricts: number;
   plotCount: number;
   smallPlots: number;
   mediumPlots: number;
@@ -42,6 +59,7 @@ export type PlotLayoutStats = {
 };
 
 export type PlotLayout = {
+  districts: DistrictBlock[];
   plots: Plot[];
   pathRects: PlotPathRect[];
   config: PlotLayoutConfig;
@@ -53,12 +71,51 @@ type Span = {
   size: number;
 };
 
+type WeightedSize = {
+  size: number;
+  weight: number;
+};
+
 export const DEFAULT_PLOT_LAYOUT_CONFIG: PlotLayoutConfig = {
   marginBlocks: 5,
   separatorBlocks: 5,
   sideLengthOptions: [20, 30, 40, 50],
   districtSideLengthOptions: [220, 250, 280, 310, 340, 370, 400],
   seed: 0xaced2026
+};
+
+const DISTRICT_STYLE_WEIGHTS: Array<{ style: DistrictSubdivisionStyle; weight: number }> = [
+  { style: "dense-small-lots", weight: 48 },
+  { style: "medium-mixed-lots", weight: 30 },
+  { style: "sparse-large-lots", weight: 14 },
+  { style: "civic-open-block", weight: 8 }
+];
+
+const STYLE_SIZE_WEIGHTS: Record<DistrictSubdivisionStyle, WeightedSize[]> = {
+  "dense-small-lots": [
+    { size: 20, weight: 9 },
+    { size: 30, weight: 4 },
+    { size: 40, weight: 1 },
+    { size: 50, weight: 0.35 }
+  ],
+  "medium-mixed-lots": [
+    { size: 20, weight: 5 },
+    { size: 30, weight: 5 },
+    { size: 40, weight: 2 },
+    { size: 50, weight: 1 }
+  ],
+  "sparse-large-lots": [
+    { size: 20, weight: 1 },
+    { size: 30, weight: 2 },
+    { size: 40, weight: 4 },
+    { size: 50, weight: 5 }
+  ],
+  "civic-open-block": [
+    { size: 20, weight: 0.25 },
+    { size: 30, weight: 1 },
+    { size: 40, weight: 4 },
+    { size: 50, weight: 7 }
+  ]
 };
 
 const mulberry32 = (seed: number) => {
@@ -72,12 +129,41 @@ const mulberry32 = (seed: number) => {
   };
 };
 
-const average = (values: readonly number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+const asWeightedSizes = (values: readonly number[]): WeightedSize[] => values.map((size) => ({ size, weight: 1 }));
 
-const findSpanCount = (total: number, config: PlotLayoutConfig) => {
-  const minSize = Math.min(...config.sideLengthOptions);
-  const maxSize = Math.max(...config.sideLengthOptions);
-  const targetAverage = average(config.sideLengthOptions);
+const weightedAverage = (values: readonly WeightedSize[]) => {
+  const totalWeight = values.reduce((sum, value) => sum + Math.max(0, value.weight), 0);
+  if (totalWeight <= 0) return values.reduce((sum, value) => sum + value.size, 0) / values.length;
+  return values.reduce((sum, value) => sum + value.size * Math.max(0, value.weight), 0) / totalWeight;
+};
+
+const pickWeightedSize = (values: readonly WeightedSize[], random: () => number) => {
+  const totalWeight = values.reduce((sum, value) => sum + Math.max(0, value.weight), 0);
+  if (totalWeight <= 0) return values[Math.floor(random() * values.length)]?.size;
+
+  let cursor = random() * totalWeight;
+  for (const value of values) {
+    cursor -= Math.max(0, value.weight);
+    if (cursor <= 0) return value.size;
+  }
+
+  return values[values.length - 1]?.size;
+};
+
+const chooseDistrictStyle = (random: () => number): DistrictSubdivisionStyle => {
+  let cursor = random() * DISTRICT_STYLE_WEIGHTS.reduce((sum, entry) => sum + entry.weight, 0);
+  for (const entry of DISTRICT_STYLE_WEIGHTS) {
+    cursor -= entry.weight;
+    if (cursor <= 0) return entry.style;
+  }
+  return "medium-mixed-lots";
+};
+
+const findSpanCount = (total: number, config: PlotLayoutConfig, weightedSizes: readonly WeightedSize[]) => {
+  const sizes = weightedSizes.map((entry) => entry.size);
+  const minSize = Math.min(...sizes);
+  const maxSize = Math.max(...sizes);
+  const targetAverage = weightedAverage(weightedSizes);
   const usable = total - config.marginBlocks * 2;
   const targetCount = Math.max(1, Math.round((usable + config.separatorBlocks) / (targetAverage + config.separatorBlocks)));
   const maxCount = Math.floor((usable + config.separatorBlocks) / (minSize + config.separatorBlocks));
@@ -103,21 +189,27 @@ const findSpanCount = (total: number, config: PlotLayoutConfig) => {
   return bestCount;
 };
 
-const buildSpans = (total: number, config: PlotLayoutConfig, random: () => number): Span[] => {
+const buildSpans = (
+  total: number,
+  config: PlotLayoutConfig,
+  random: () => number,
+  weightedSizes: readonly WeightedSize[] = asWeightedSizes(config.sideLengthOptions)
+): Span[] => {
   const spans: Span[] = [];
-  const count = findSpanCount(total, config);
-  const minSize = Math.min(...config.sideLengthOptions);
-  const maxSize = Math.max(...config.sideLengthOptions);
+  const count = findSpanCount(total, config, weightedSizes);
+  const sizes = weightedSizes.map((entry) => entry.size);
+  const minSize = Math.min(...sizes);
+  const maxSize = Math.max(...sizes);
   let remainingSizeSum = total - config.marginBlocks * 2 - config.separatorBlocks * (count - 1);
   let cursor = config.marginBlocks;
 
   for (let index = 0; index < count; index += 1) {
     const remainingSlots = count - index - 1;
-    const candidates = config.sideLengthOptions.filter((size) => {
+    const candidates = weightedSizes.filter(({ size }) => {
       const nextRemaining = remainingSizeSum - size;
       return nextRemaining >= remainingSlots * minSize && nextRemaining <= remainingSlots * maxSize;
     });
-    const size = candidates[Math.floor(random() * candidates.length)] ?? minSize;
+    const size = pickWeightedSize(candidates, random) ?? minSize;
     spans.push({ start: cursor, size });
     cursor += size;
     remainingSizeSum -= size;
@@ -133,7 +225,7 @@ const classifyPlot = (area: number): PlotSizeClass => {
   return "large";
 };
 
-const makePlot = (id: string, column: Span, row: Span): Plot => {
+const makePlot = (id: string, district: DistrictBlock, column: Span, row: Span): Plot => {
   const x = column.start;
   const z = row.start;
   const width = column.size;
@@ -142,6 +234,8 @@ const makePlot = (id: string, column: Span, row: Span): Plot => {
 
   return {
     id,
+    districtId: district.id,
+    districtStyle: district.style,
     x,
     z,
     width,
@@ -151,6 +245,28 @@ const makePlot = (id: string, column: Span, row: Span): Plot => {
     centerZ: z + depth / 2,
     sizeClass: classifyPlot(area)
   };
+};
+
+const makeDistrict = (id: string, column: Span, row: Span, style: DistrictSubdivisionStyle): DistrictBlock => ({
+  id,
+  x: column.start,
+  z: row.start,
+  width: column.size,
+  depth: row.size,
+  style
+});
+
+const shouldSplitRowsFirst = (style: DistrictSubdivisionStyle, random: () => number) => {
+  switch (style) {
+    case "dense-small-lots":
+      return random() < 0.55;
+    case "medium-mixed-lots":
+      return random() < 0.5;
+    case "sparse-large-lots":
+      return random() < 0.42;
+    case "civic-open-block":
+      return random() < 0.25;
+  }
 };
 
 const makePathRect = (x: number, z: number, width: number, depth: number): PlotPathRect | null => {
@@ -211,6 +327,7 @@ export const generatePlotLayout = (
   };
   const districtColumns = buildSpans(world.width, districtConfig, random);
   const districtRows = buildSpans(world.depth, districtConfig, random);
+  const districts: DistrictBlock[] = [];
   const plots: Plot[] = [];
   const pathRects: PlotPathRect[] = [];
 
@@ -221,29 +338,32 @@ export const generatePlotLayout = (
 
   for (const districtRow of districtRows) {
     for (const districtColumn of districtColumns) {
-      const splitRowsFirst = random() < 0.5;
+      const district = makeDistrict(`district-${districts.length + 1}`, districtColumn, districtRow, chooseDistrictStyle(random));
+      const localWeightedSizes = STYLE_SIZE_WEIGHTS[district.style];
+      const splitRowsFirst = shouldSplitRowsFirst(district.style, random);
+      districts.push(district);
 
       if (splitRowsFirst) {
-        const localRows = buildSpans(districtRow.size, plotConfig, random);
+        const localRows = buildSpans(district.depth, plotConfig, random, localWeightedSizes);
         addPathRectsAroundSpans(
           pathRects,
           localRows,
-          districtColumn.start,
-          districtColumn.size,
-          districtRow.start,
-          districtRow.size,
+          district.x,
+          district.width,
+          district.z,
+          district.depth,
           "z"
         );
 
         for (const localRow of localRows) {
-          const localColumns = buildSpans(districtColumn.size, plotConfig, random);
+          const localColumns = buildSpans(district.width, plotConfig, random, localWeightedSizes);
           addPathRectsAroundSpans(
             pathRects,
             localColumns,
-            districtRow.start + localRow.start,
+            district.z + localRow.start,
             localRow.size,
-            districtColumn.start,
-            districtColumn.size,
+            district.x,
+            district.width,
             "x"
           );
 
@@ -251,33 +371,34 @@ export const generatePlotLayout = (
             plots.push(
               makePlot(
                 `plot-${plots.length + 1}`,
-                { start: districtColumn.start + localColumn.start, size: localColumn.size },
-                { start: districtRow.start + localRow.start, size: localRow.size }
+                district,
+                { start: district.x + localColumn.start, size: localColumn.size },
+                { start: district.z + localRow.start, size: localRow.size }
               )
             );
           }
         }
       } else {
-        const localColumns = buildSpans(districtColumn.size, plotConfig, random);
+        const localColumns = buildSpans(district.width, plotConfig, random, localWeightedSizes);
         addPathRectsAroundSpans(
           pathRects,
           localColumns,
-          districtRow.start,
-          districtRow.size,
-          districtColumn.start,
-          districtColumn.size,
+          district.z,
+          district.depth,
+          district.x,
+          district.width,
           "x"
         );
 
         for (const localColumn of localColumns) {
-          const localRows = buildSpans(districtRow.size, plotConfig, random);
+          const localRows = buildSpans(district.depth, plotConfig, random, localWeightedSizes);
           addPathRectsAroundSpans(
             pathRects,
             localRows,
-            districtColumn.start + localColumn.start,
+            district.x + localColumn.start,
             localColumn.size,
-            districtRow.start,
-            districtRow.size,
+            district.z,
+            district.depth,
             "z"
           );
 
@@ -285,8 +406,9 @@ export const generatePlotLayout = (
             plots.push(
               makePlot(
                 `plot-${plots.length + 1}`,
-                { start: districtColumn.start + localColumn.start, size: localColumn.size },
-                { start: districtRow.start + localRow.start, size: localRow.size }
+                district,
+                { start: district.x + localColumn.start, size: localColumn.size },
+                { start: district.z + localRow.start, size: localRow.size }
               )
             );
           }
@@ -300,12 +422,22 @@ export const generatePlotLayout = (
   const smallPlots = plots.filter((plot) => plot.sizeClass === "small").length;
   const mediumPlots = plots.filter((plot) => plot.sizeClass === "medium").length;
   const largePlots = plots.filter((plot) => plot.sizeClass === "large").length;
+  const denseDistricts = districts.filter((district) => district.style === "dense-small-lots").length;
+  const mediumDistricts = districts.filter((district) => district.style === "medium-mixed-lots").length;
+  const sparseDistricts = districts.filter((district) => district.style === "sparse-large-lots").length;
+  const civicDistricts = districts.filter((district) => district.style === "civic-open-block").length;
 
   return {
+    districts,
     plots,
     pathRects,
     config,
     stats: {
+      districtCount: districts.length,
+      denseDistricts,
+      mediumDistricts,
+      sparseDistricts,
+      civicDistricts,
       plotCount: plots.length,
       smallPlots,
       mediumPlots,
