@@ -20,8 +20,8 @@ const DEFAULT_HEIGHTMAP_URLS = ["/heightmap.png", "/public/heightmap.png"];
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 const brightnessToHeight = (brightness: number, maxTerrainHeight: number) => {
-  const scaled = Math.round(clamp01(brightness) * (maxTerrainHeight - 1)) + 1;
-  return Math.max(1, Math.min(maxTerrainHeight, scaled));
+  const scaled = Math.round(clamp01(brightness) * maxTerrainHeight);
+  return Math.max(0, Math.min(maxTerrainHeight, scaled));
 };
 
 const imageBitmapFromUrl = async (url: string) => {

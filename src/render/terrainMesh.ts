@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { colorForBlock, type SolidBlockId } from "../world/blocks";
+import { BLOCKS, colorForBlock, type SolidBlockId } from "../world/blocks";
 import { HeightmapWorld, type HeightmapWorldStats } from "../world/heightmapWorld";
 
 export type TerrainBuildResult = {
@@ -23,20 +23,6 @@ const worldZ = (world: HeightmapWorld, z: number) => (z - world.depth / 2) * wor
 const clampColumnX = (world: HeightmapWorld, x: number) => Math.max(0, Math.min(world.width - 1, x));
 const clampColumnZ = (world: HeightmapWorld, z: number) => Math.max(0, Math.min(world.depth - 1, z));
 
-const sampleRange = (min: number, max: number, step: number) => {
-  const samples: number[] = [];
-
-  for (let value = min; value < max; value += step) {
-    samples.push(value);
-  }
-
-  if (samples.length === 0 || samples[samples.length - 1] !== max) {
-    samples.push(max);
-  }
-
-  return samples;
-};
-
 const pushVertex = (buffers: MeshBuffers, world: HeightmapWorld, x: number, y: number, z: number, blockId: SolidBlockId) => {
   buffers.positions.push(worldX(world, x), worldY(world, y), worldZ(world, z));
   color.set(colorForBlock(blockId));
@@ -57,7 +43,125 @@ const createTerrainMesh = (name: string, buffers: MeshBuffers, material: THREE.M
   return mesh;
 };
 
-const pushTopSurfaceChunk = (
+const materialBandsForColumn = (world: HeightmapWorld, x: number, z: number) => {
+  const height = world.heightAt(x, z);
+  if (height <= 0) return [];
+
+  const surfaceStart = Math.max(0, height - 1);
+  const dirtStart = Math.max(0, height - world.dirtDepth);
+  const bands: Array<{ from: number; to: number; blockId: SolidBlockId }> = [];
+
+  if (dirtStart > 0) bands.push({ from: 0, to: dirtStart, blockId: BLOCKS.stone });
+  if (surfaceStart > dirtStart) bands.push({ from: dirtStart, to: surfaceStart, blockId: BLOCKS.dirt });
+  bands.push({ from: surfaceStart, to: height, blockId: world.surfaceBlockAt(x, z) });
+
+  return bands;
+};
+
+const materialBandsForRange = (world: HeightmapWorld, x: number, z: number, from: number, to: number) =>
+  materialBandsForColumn(world, x, z)
+    .map((band) => ({
+      from: Math.max(from, band.from),
+      to: Math.min(to, band.to),
+      blockId: band.blockId
+    }))
+    .filter((band) => band.to > band.from);
+
+const pushQuad = (buffers: MeshBuffers, world: HeightmapWorld, corners: Array<[number, number, number]>, blockId: SolidBlockId) => {
+  const start = buffers.positions.length / 3;
+  for (const [x, y, z] of corners) {
+    pushVertex(buffers, world, x, y, z, blockId);
+  }
+  buffers.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
+};
+
+const sampledHeightAt = (world: HeightmapWorld, x: number, z: number) => {
+  if (x < 0 || x >= world.width || z < 0 || z >= world.depth) return 0;
+  return world.heightAt(clampColumnX(world, x), clampColumnZ(world, z));
+};
+
+const pushTopFace = (
+  buffers: MeshBuffers,
+  world: HeightmapWorld,
+  x0: number,
+  x1: number,
+  z0: number,
+  z1: number,
+  height: number,
+  blockId: SolidBlockId
+) => {
+  if (height <= 0) return 0;
+
+  pushQuad(
+    buffers,
+    world,
+    [
+      [x0, height, z1],
+      [x1, height, z1],
+      [x1, height, z0],
+      [x0, height, z0]
+    ],
+    blockId
+  );
+
+  return 2;
+};
+
+type SideDirection = "east" | "west" | "south" | "north";
+
+const pushSideFace = (
+  buffers: MeshBuffers,
+  world: HeightmapWorld,
+  direction: SideDirection,
+  x0: number,
+  x1: number,
+  z0: number,
+  z1: number,
+  from: number,
+  to: number,
+  blockId: SolidBlockId
+) => {
+  switch (direction) {
+    case "east":
+      pushQuad(buffers, world, [[x1, to, z0], [x1, to, z1], [x1, from, z1], [x1, from, z0]], blockId);
+      break;
+    case "west":
+      pushQuad(buffers, world, [[x0, to, z1], [x0, to, z0], [x0, from, z0], [x0, from, z1]], blockId);
+      break;
+    case "south":
+      pushQuad(buffers, world, [[x0, from, z1], [x1, from, z1], [x1, to, z1], [x0, to, z1]], blockId);
+      break;
+    case "north":
+      pushQuad(buffers, world, [[x1, from, z0], [x0, from, z0], [x0, to, z0], [x1, to, z0]], blockId);
+      break;
+  }
+};
+
+const pushColumnSide = (
+  buffers: MeshBuffers,
+  world: HeightmapWorld,
+  direction: SideDirection,
+  x0: number,
+  x1: number,
+  z0: number,
+  z1: number,
+  columnX: number,
+  columnZ: number,
+  neighborHeight: number,
+  columnHeight: number
+) => {
+  if (columnHeight <= neighborHeight) return 0;
+
+  let triangles = 0;
+  for (const band of materialBandsForRange(world, columnX, columnZ, neighborHeight, columnHeight)) {
+    pushSideFace(buffers, world, direction, x0, x1, z0, z1, band.from, band.to, band.blockId);
+    triangles += 2;
+  }
+
+  return triangles;
+};
+
+const pushHeightmapChunk = (
   group: THREE.Group,
   material: THREE.Material,
   world: HeightmapWorld,
@@ -68,129 +172,34 @@ const pushTopSurfaceChunk = (
   const minZ = chunkZ * world.chunkSize;
   const maxX = Math.min(minX + world.chunkSize, world.width);
   const maxZ = Math.min(minZ + world.chunkSize, world.depth);
-  const xSamples = sampleRange(minX, maxX, SURFACE_SAMPLE_STEP);
-  const zSamples = sampleRange(minZ, maxZ, SURFACE_SAMPLE_STEP);
-  const vertexWidth = xSamples.length;
   const buffers: MeshBuffers = {
     positions: [],
     colors: [],
     indices: []
   };
+  let triangles = 0;
 
-  for (const z of zSamples) {
-    for (const x of xSamples) {
-      const sampleX = clampColumnX(world, x);
-      const sampleZ = clampColumnZ(world, z);
-      pushVertex(buffers, world, x, world.heightAt(sampleX, sampleZ), z, world.surfaceBlockAt(sampleX, sampleZ));
+  for (let z = minZ; z < maxZ; z += SURFACE_SAMPLE_STEP) {
+    for (let x = minX; x < maxX; x += SURFACE_SAMPLE_STEP) {
+      const x1 = Math.min(x + SURFACE_SAMPLE_STEP, world.width);
+      const z1 = Math.min(z + SURFACE_SAMPLE_STEP, world.depth);
+      const columnX = clampColumnX(world, x);
+      const columnZ = clampColumnZ(world, z);
+      const columnHeight = world.heightAt(columnX, columnZ);
+
+      triangles += pushTopFace(buffers, world, x, x1, z, z1, columnHeight, world.surfaceBlockAt(columnX, columnZ));
+      triangles += pushColumnSide(buffers, world, "east", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x1, z), columnHeight);
+      triangles += pushColumnSide(buffers, world, "west", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x - SURFACE_SAMPLE_STEP, z), columnHeight);
+      triangles += pushColumnSide(buffers, world, "south", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x, z1), columnHeight);
+      triangles += pushColumnSide(buffers, world, "north", x, x1, z, z1, columnX, columnZ, sampledHeightAt(world, x, z - SURFACE_SAMPLE_STEP), columnHeight);
     }
   }
 
-  for (let sampleZ = 0; sampleZ < zSamples.length - 1; sampleZ += 1) {
-    for (let sampleX = 0; sampleX < xSamples.length - 1; sampleX += 1) {
-      const a = sampleZ * vertexWidth + sampleX;
-      const b = a + 1;
-      const d = a + vertexWidth;
-      const c = d + 1;
-
-      buffers.indices.push(d, c, b, d, b, a);
-    }
+  if (buffers.positions.length > 0) {
+    group.add(createTerrainMesh(`heightmap-chunk-${chunkX}-${chunkZ}`, buffers, material));
   }
 
-  group.add(createTerrainMesh(`heightmap-surface-${chunkX}-${chunkZ}`, buffers, material));
-  return (xSamples.length - 1) * (zSamples.length - 1) * 2;
-};
-
-const materialBandsForColumn = (world: HeightmapWorld, x: number, z: number) => {
-  const height = world.heightAt(x, z);
-  if (height <= 0) return [];
-
-  const surfaceStart = Math.max(0, height - 1);
-  const dirtStart = Math.max(0, height - world.dirtDepth);
-  const bands: Array<{ from: number; to: number; blockId: SolidBlockId }> = [];
-
-  if (dirtStart > 0) bands.push({ from: 0, to: dirtStart, blockId: 1 });
-  if (surfaceStart > dirtStart) bands.push({ from: dirtStart, to: surfaceStart, blockId: 2 });
-  bands.push({ from: surfaceStart, to: height, blockId: world.surfaceBlockAt(x, z) });
-
-  return bands;
-};
-
-const pushQuad = (buffers: MeshBuffers, world: HeightmapWorld, corners: Array<[number, number, number]>, blockId: SolidBlockId) => {
-  const start = buffers.positions.length / 3;
-  for (const [x, y, z] of corners) {
-    pushVertex(buffers, world, x, y, z, blockId);
-  }
-  buffers.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
-};
-
-const pushBoundaryWalls = (group: THREE.Group, material: THREE.Material, world: HeightmapWorld) => {
-  const buffers: MeshBuffers = {
-    positions: [],
-    colors: [],
-    indices: []
-  };
-
-  for (let z = 0; z < world.depth; z += 1) {
-    for (const band of materialBandsForColumn(world, 0, z)) {
-      pushQuad(
-        buffers,
-        world,
-        [
-          [0, band.to, z + 1],
-          [0, band.to, z],
-          [0, band.from, z],
-          [0, band.from, z + 1]
-        ],
-        band.blockId
-      );
-    }
-
-    for (const band of materialBandsForColumn(world, world.width - 1, z)) {
-      pushQuad(
-        buffers,
-        world,
-        [
-          [world.width, band.to, z],
-          [world.width, band.to, z + 1],
-          [world.width, band.from, z + 1],
-          [world.width, band.from, z]
-        ],
-        band.blockId
-      );
-    }
-  }
-
-  for (let x = 0; x < world.width; x += 1) {
-    for (const band of materialBandsForColumn(world, x, 0)) {
-      pushQuad(
-        buffers,
-        world,
-        [
-          [x + 1, band.from, 0],
-          [x, band.from, 0],
-          [x, band.to, 0],
-          [x + 1, band.to, 0]
-        ],
-        band.blockId
-      );
-    }
-
-    for (const band of materialBandsForColumn(world, x, world.depth - 1)) {
-      pushQuad(
-        buffers,
-        world,
-        [
-          [x, band.from, world.depth],
-          [x + 1, band.from, world.depth],
-          [x + 1, band.to, world.depth],
-          [x, band.to, world.depth]
-        ],
-        band.blockId
-      );
-    }
-  }
-
-  group.add(createTerrainMesh("heightmap-boundary-walls", buffers, material));
+  return triangles;
 };
 
 export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult => {
@@ -204,17 +213,13 @@ export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult
 
   const chunksX = Math.ceil(world.width / world.chunkSize);
   const chunksZ = Math.ceil(world.depth / world.chunkSize);
-  let surfaceTriangles = 0;
+  let terrainTriangles = 0;
 
   for (let chunkZ = 0; chunkZ < chunksZ; chunkZ += 1) {
     for (let chunkX = 0; chunkX < chunksX; chunkX += 1) {
-      surfaceTriangles += pushTopSurfaceChunk(group, material, world, chunkX, chunkZ);
+      terrainTriangles += pushHeightmapChunk(group, material, world, chunkX, chunkZ);
     }
   }
-
-  pushBoundaryWalls(group, material, world);
-
-  const boundaryTriangles = group.children.length > 0 ? ((group.children.at(-1) as THREE.Mesh).geometry.index?.count ?? 0) / 3 : 0;
 
   return {
     group,
@@ -232,8 +237,8 @@ export const buildHeightmapTerrain = (world: HeightmapWorld): TerrainBuildResult
       chunkSize: world.chunkSize,
       chunkColumns: world.chunkColumns,
       meshStep: SURFACE_SAMPLE_STEP,
-      generatedChunks: world.chunkColumns,
-      triangles: surfaceTriangles + boundaryTriangles,
+      generatedChunks: group.children.length,
+      triangles: terrainTriangles,
       borderMin: world.borderMin,
       borderMax: world.borderMax
     }

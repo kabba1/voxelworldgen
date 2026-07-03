@@ -39,7 +39,7 @@ export const HEIGHTMAP_WORLD_CONFIG: HeightmapWorldConfig = {
   depth: 2000,
   blockSize: 0.5,
   maxTerrainHeight: 256,
-  chunkSize: 250,
+  chunkSize: 256,
   dirtDepth: 5,
   steepDirtThreshold: 4,
   steepStoneThreshold: 12,
