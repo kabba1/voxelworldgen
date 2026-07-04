@@ -16,7 +16,16 @@ import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 
-const world = new FlatWorld();
+const seedWorld = new FlatWorld();
+const plotLayout = generatePlotLayout(seedWorld);
+const world = new FlatWorld({
+  width: Math.max(1, plotLayout.bounds.maxX),
+  depth: Math.max(1, plotLayout.bounds.maxZ),
+  blockSize: seedWorld.blockSize,
+  stoneDepth: seedWorld.stoneDepth,
+  dirtDepth: seedWorld.dirtDepth,
+  grassDepth: seedWorld.grassDepth
+});
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x93cdea);
@@ -86,7 +95,6 @@ const start = () => {
   scene.add(sky.group);
 
   const materials = loadTerrainMaterials();
-  const plotLayout = generatePlotLayout(world);
   const surfaceBlocks = buildSurfaceBlockMap(world, plotLayout);
   const editableWorld = new EditableWorld(world, surfaceBlocks.blockAt);
   const { group: terrain, stats: worldStats, setHiddenTopColumns } = buildFlatTerrain(world, materials, surfaceBlocks.rects);

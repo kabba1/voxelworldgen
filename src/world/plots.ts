@@ -34,6 +34,15 @@ export type PublicOpenSpace = {
   area: number;
 };
 
+export type PlotLayoutBounds = {
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  maxX: number;
+  maxZ: number;
+};
+
 export type DistrictBlock = {
   id: string;
   x: number;
@@ -71,6 +80,7 @@ export type PlotLayoutStats = {
 };
 
 export type PlotLayout = {
+  bounds: PlotLayoutBounds;
   districts: DistrictBlock[];
   plots: Plot[];
   pathRects: PlotPathRect[];
@@ -87,6 +97,12 @@ type Span = {
 type WeightedSize = {
   size: number;
   weight: number;
+};
+
+type SpanPlan = {
+  count: number;
+  sizeSum: number;
+  leadingSlack: number;
 };
 
 export const DEFAULT_PLOT_LAYOUT_CONFIG: PlotLayoutConfig = {
@@ -176,7 +192,7 @@ const chooseDistrictStyle = (random: () => number): DistrictSubdivisionStyle => 
   return "medium-mixed-lots";
 };
 
-const findSpanCount = (total: number, config: PlotLayoutConfig, weightedSizes: readonly WeightedSize[]) => {
+const findSpanPlan = (total: number, config: PlotLayoutConfig, weightedSizes: readonly WeightedSize[]): SpanPlan => {
   const sizes = weightedSizes.map((entry) => entry.size);
   const minSize = Math.min(...sizes);
   const maxSize = Math.max(...sizes);
@@ -184,26 +200,33 @@ const findSpanCount = (total: number, config: PlotLayoutConfig, weightedSizes: r
   const usable = total - config.marginBlocks * 2;
   const targetCount = Math.max(1, Math.round((usable + config.separatorBlocks) / (targetAverage + config.separatorBlocks)));
   const maxCount = Math.floor((usable + config.separatorBlocks) / (minSize + config.separatorBlocks));
-  let bestCount = 1;
-  let bestDistance = Number.POSITIVE_INFINITY;
+  const maxEdgeSlack = config.separatorBlocks * 2;
+  let bestPlan: SpanPlan | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
 
   for (let count = 1; count <= maxCount; count += 1) {
-    const targetSizeSum = usable - config.separatorBlocks * (count - 1);
-    const canFill =
-      targetSizeSum >= count * minSize &&
-      targetSizeSum <= count * maxSize &&
-      targetSizeSum % 10 === 0;
+    const spaceBeforeEdgeSlack = usable - config.separatorBlocks * (count - 1);
 
-    if (!canFill) continue;
+    for (let edgeSlack = 0; edgeSlack <= maxEdgeSlack; edgeSlack += config.separatorBlocks) {
+      const sizeSum = spaceBeforeEdgeSlack - edgeSlack;
+      const canFill =
+        sizeSum >= count * minSize &&
+        sizeSum <= count * maxSize &&
+        sizeSum % 10 === 0;
 
-    const distance = Math.abs(count - targetCount);
-    if (distance < bestDistance) {
-      bestCount = count;
-      bestDistance = distance;
+      if (!canFill) continue;
+
+      const countDistance = Math.abs(count - targetCount);
+      const leadingSlack = Math.floor(edgeSlack / 2 / config.separatorBlocks) * config.separatorBlocks;
+      const score = countDistance * 100 + edgeSlack;
+      if (score < bestScore) {
+        bestPlan = { count, sizeSum, leadingSlack };
+        bestScore = score;
+      }
     }
   }
 
-  return bestCount;
+  return bestPlan ?? { count: 1, sizeSum: Math.min(maxSize, snapDown(usable)), leadingSlack: 0 };
 };
 
 const buildSpans = (
@@ -218,12 +241,12 @@ const buildSpans = (
   const maxSize = Math.max(...sizes);
   if (total - config.marginBlocks * 2 < minSize) return spans;
 
-  const count = findSpanCount(total, config, weightedSizes);
-  let remainingSizeSum = total - config.marginBlocks * 2 - config.separatorBlocks * (count - 1);
-  let cursor = config.marginBlocks;
+  const plan = findSpanPlan(total, config, weightedSizes);
+  let remainingSizeSum = plan.sizeSum;
+  let cursor = config.marginBlocks + plan.leadingSlack;
 
-  for (let index = 0; index < count; index += 1) {
-    const remainingSlots = count - index - 1;
+  for (let index = 0; index < plan.count; index += 1) {
+    const remainingSlots = plan.count - index - 1;
     const candidates = weightedSizes.filter(({ size }) => {
       const nextRemaining = remainingSizeSum - size;
       return nextRemaining >= remainingSlots * minSize && nextRemaining <= remainingSlots * maxSize;
@@ -232,7 +255,7 @@ const buildSpans = (
     spans.push({ start: cursor, size });
     cursor += size;
     remainingSizeSum -= size;
-    if (index < count - 1) cursor += config.separatorBlocks;
+    if (index < plan.count - 1) cursor += config.separatorBlocks;
   }
 
   return spans;
@@ -308,6 +331,18 @@ const pushPathRect = (pathRects: PlotPathRect[], x: number, z: number, width: nu
   if (rect) pathRects.push(rect);
 };
 
+const addOpenSpace = (
+  publicOpenSpaces: PublicOpenSpace[],
+  district: DistrictBlock,
+  x: number,
+  z: number,
+  width: number,
+  depth: number
+) => {
+  if (width <= 0 || depth <= 0) return;
+  publicOpenSpaces.push(makePublicOpenSpace(`open-${publicOpenSpaces.length + 1}`, district, x, z, width, depth));
+};
+
 const addPlotsInRect = (
   rect: PlotPathRect,
   district: DistrictBlock,
@@ -315,13 +350,24 @@ const addPlotsInRect = (
   weightedSizes: readonly WeightedSize[],
   random: () => number,
   plots: Plot[],
-  pathRects: PlotPathRect[]
+  pathRects: PlotPathRect[],
+  publicOpenSpaces: PublicOpenSpace[]
 ) => {
   const localRows = buildSpans(rect.depth, plotConfig, random, weightedSizes);
+  if (localRows.length === 0) {
+    addOpenSpace(publicOpenSpaces, district, rect.x, rect.z, rect.width, rect.depth);
+    return;
+  }
+
   addPathRectsAroundSpans(pathRects, localRows, rect.x, rect.width, rect.z, rect.depth, "z");
 
   for (const localRow of localRows) {
     const localColumns = buildSpans(rect.width, plotConfig, random, weightedSizes);
+    if (localColumns.length === 0) {
+      addOpenSpace(publicOpenSpaces, district, rect.x, rect.z + localRow.start, rect.width, localRow.size);
+      continue;
+    }
+
     addPathRectsAroundSpans(pathRects, localColumns, rect.z + localRow.start, localRow.size, rect.x, rect.width, "x");
 
     for (const localColumn of localColumns) {
@@ -379,7 +425,7 @@ const addCivicOpenDistrict = (
   ].filter((band) => band.width > 0 && band.depth > 0);
 
   for (const band of bands) {
-    addPlotsInRect(band, district, plotConfig, STYLE_SIZE_WEIGHTS["civic-open-block"], random, plots, pathRects);
+    addPlotsInRect(band, district, plotConfig, STYLE_SIZE_WEIGHTS["civic-open-block"], random, plots, pathRects, publicOpenSpaces);
   }
 };
 
@@ -390,8 +436,13 @@ const addPathRectsAroundSpans = (
   fixedSize: number,
   variableStart: number,
   variableSize: number,
-  axis: "x" | "z"
+  axis: "x" | "z",
+  openSpaceContext?: {
+    district: DistrictBlock;
+    publicOpenSpaces: PublicOpenSpace[];
+  }
 ) => {
+  const maxPathSize = DEFAULT_PLOT_LAYOUT_CONFIG.separatorBlocks;
   const push = (start: number, size: number) => {
     if (axis === "x") {
       pushPathRect(pathRects, start, fixedStart, size, fixedSize);
@@ -399,21 +450,58 @@ const addPathRectsAroundSpans = (
     }
     pushPathRect(pathRects, fixedStart, start, fixedSize, size);
   };
+  const pushOpen = (start: number, size: number) => {
+    if (!openSpaceContext || size <= 0) return;
+    if (axis === "x") {
+      addOpenSpace(openSpaceContext.publicOpenSpaces, openSpaceContext.district, start, fixedStart, size, fixedSize);
+      return;
+    }
+    addOpenSpace(openSpaceContext.publicOpenSpaces, openSpaceContext.district, fixedStart, start, fixedSize, size);
+  };
+  const pushEdge = (start: number, size: number) => {
+    if (size <= 0) return;
+    const pathSize = Math.min(size, maxPathSize);
+    push(start, pathSize);
+    pushOpen(start + pathSize, size - pathSize);
+  };
 
   if (spans.length === 0) {
-    push(variableStart, variableSize);
+    pushOpen(variableStart, variableSize);
     return;
   }
 
-  push(variableStart, spans[0].start);
+  pushEdge(variableStart, spans[0].start);
   for (let index = 0; index < spans.length - 1; index += 1) {
     const start = variableStart + spans[index].start + spans[index].size;
     const end = variableStart + spans[index + 1].start;
-    push(start, end - start);
+    pushEdge(start, end - start);
   }
   const last = spans[spans.length - 1];
   const lastEnd = last.start + last.size;
-  push(variableStart + lastEnd, variableSize - lastEnd);
+  pushEdge(variableStart + lastEnd, variableSize - lastEnd);
+};
+
+const calculateLayoutBounds = (
+  plots: Plot[],
+  pathRects: PlotPathRect[],
+  publicOpenSpaces: PublicOpenSpace[]
+): PlotLayoutBounds => {
+  const rects = [
+    ...plots.map((plot) => ({ x: plot.x, z: plot.z, width: plot.width, depth: plot.depth })),
+    ...pathRects,
+    ...publicOpenSpaces.map((openSpace) => ({ x: openSpace.x, z: openSpace.z, width: openSpace.width, depth: openSpace.depth }))
+  ].filter((rect) => rect.width > 0 && rect.depth > 0);
+
+  if (rects.length === 0) {
+    return { x: 0, z: 0, width: 0, depth: 0, maxX: 0, maxZ: 0 };
+  }
+
+  const x = Math.min(...rects.map((rect) => rect.x));
+  const z = Math.min(...rects.map((rect) => rect.z));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxZ = Math.max(...rects.map((rect) => rect.z + rect.depth));
+
+  return { x, z, width: maxX - x, depth: maxZ - z, maxX, maxZ };
 };
 
 export const generatePlotLayout = (
@@ -537,8 +625,11 @@ export const generatePlotLayout = (
   const sparseDistricts = districts.filter((district) => district.style === "sparse-large-lots").length;
   const civicDistricts = districts.filter((district) => district.style === "civic-open-block").length;
   const publicOpenSpaceArea = publicOpenSpaces.reduce((sum, openSpace) => sum + openSpace.area, 0);
+  const bounds = calculateLayoutBounds(plots, pathRects, publicOpenSpaces);
+  const layoutArea = Math.max(1, bounds.width * bounds.depth);
 
   return {
+    bounds,
     districts,
     plots,
     pathRects,
@@ -558,7 +649,7 @@ export const generatePlotLayout = (
       largePlots,
       averageArea,
       totalPlotArea,
-      coverageRatio: totalPlotArea / (world.width * world.depth),
+      coverageRatio: totalPlotArea / layoutArea,
       separatorBlocks: config.separatorBlocks,
       outlineTriangles: 0
     }
