@@ -67,7 +67,6 @@ export class StatsOverlay {
       `chunks ${this.worldStats.generatedChunks}/${this.worldStats.chunkColumns}`,
       `terrain tris ${this.worldStats.triangles.toLocaleString()}`,
       `patches ${this.plotStats.districtCount}`,
-      `public open ${this.plotStats.publicOpenSpaceCount} | area ${this.plotStats.publicOpenSpaceArea.toLocaleString()}`,
       `plots ${this.plotStats.plotCount} | path ${this.plotStats.separatorBlocks}`,
       `groups ${this.plotStats.group1Plots}/${this.plotStats.group2Plots}/${this.plotStats.group3Plots}/${this.plotStats.group4Plots}`,
       `group mix ${(this.plotStats.group1Ratio * 100).toFixed(0)}/${(this.plotStats.group2Ratio * 100).toFixed(0)}/${(this.plotStats.group3Ratio * 100).toFixed(0)}/${(this.plotStats.group4Ratio * 100).toFixed(0)}%`,

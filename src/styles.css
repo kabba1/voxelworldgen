@@ -70,3 +70,49 @@ canvas {
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
+
+.plot-inspector {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  width: min(280px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  background: rgb(16 20 18 / 82%);
+  color: #f7f7f2;
+  font-size: 13px;
+  line-height: 1.35;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.plot-inspector__title {
+  margin-bottom: 8px;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.plot-inspector__empty {
+  color: rgb(247 247 242 / 70%);
+}
+
+.plot-inspector__row {
+  display: grid;
+  grid-template-columns: minmax(94px, 1fr) minmax(0, 1.25fr);
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.plot-inspector__label {
+  color: rgb(247 247 242 / 64%);
+}
+
+.plot-inspector__value {
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  text-align: right;
+}

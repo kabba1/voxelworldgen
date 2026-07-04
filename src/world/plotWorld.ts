@@ -1,6 +1,6 @@
 import { BLOCKS, type BlockId, type SolidBlockId } from "./blocks";
 import { FlatWorld, type FlatWorldConfig } from "./flatWorld";
-import type { Plot, PlotLayout, PlotPathRect, PublicOpenSpace } from "./plots";
+import type { Plot, PlotLayout, PlotPathRect } from "./plots";
 
 export type SurfaceBlockRect = {
   x0: number;
@@ -17,18 +17,18 @@ export type SurfaceBlockMap = {
 
 const SURFACE_CELL_SIZE = 1;
 const EMPTY_CELL = 0;
-const PUBLIC_CELL = 1;
-const PLOT_CELL = 2;
-const PATH_CELL = 3;
+const PLOT_CELL = 1;
+const PATH_CELL = 2;
 const NO_PLOT = -1;
 
-type SurfaceCell = typeof EMPTY_CELL | typeof PUBLIC_CELL | typeof PLOT_CELL | typeof PATH_CELL;
+type SurfaceCell = typeof EMPTY_CELL | typeof PLOT_CELL | typeof PATH_CELL;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const blockForCell = (cell: SurfaceCell): SolidBlockId | null => {
   if (cell === EMPTY_CELL) return null;
-  return cell === PATH_CELL ? BLOCKS.path : BLOCKS.grass;
+  if (cell === PLOT_CELL) return BLOCKS.grass;
+  return BLOCKS.path;
 };
 
 const rectToCellBounds = (
@@ -134,7 +134,6 @@ export class PlotWorld extends FlatWorld {
     this.plotCellIndices.fill(NO_PLOT);
 
     this.markPlots(layout.plots);
-    this.markPublicSpaces(layout.publicOpenSpaces);
     this.markPaths(layout.pathRects);
     this.surfaceRectCache = buildSurfaceRects(this.surfaceCells, this, this.columns, this.rows);
   }
@@ -172,8 +171,9 @@ export class PlotWorld extends FlatWorld {
   }
 
   canBuild(agentId: string, x: number, z: number) {
-    void agentId;
-    return this.isBuildable(x, z);
+    const plot = this.plotAt(x, z);
+    if (!plot) return false;
+    return plot.ownerAgentId === null || plot.ownerAgentId === agentId;
   }
 
   surfaceRects() {
@@ -191,12 +191,6 @@ export class PlotWorld extends FlatWorld {
     plots.forEach((plot, index) => {
       markCells(this.surfaceCells, this.plotCellIndices, this.columns, this.rows, plot, PLOT_CELL, index);
     });
-  }
-
-  private markPublicSpaces(publicOpenSpaces: PublicOpenSpace[]) {
-    for (const openSpace of publicOpenSpaces) {
-      markCells(this.surfaceCells, this.plotCellIndices, this.columns, this.rows, openSpace, PUBLIC_CELL, NO_PLOT);
-    }
   }
 
   private markPaths(pathRects: PlotPathRect[]) {

@@ -18,6 +18,7 @@ export type Plot = {
   centerX: number;
   centerZ: number;
   sizeClass: PlotSizeClass;
+  ownerAgentId: string | null;
 };
 
 export type PlotPathRect = {
@@ -114,6 +115,11 @@ type SplitCandidate = {
   after: number;
 };
 
+type ComposableLengths = {
+  all: ReadonlySet<number>;
+  district: readonly number[];
+};
+
 export const DEFAULT_PLOT_LAYOUT_CONFIG: PlotLayoutConfig = {
   marginBlocks: 42,
   pathWidthBlocks: 2,
@@ -145,13 +151,10 @@ const PLOT_SHAPES: readonly PlotShape[] = BASE_PLOT_SHAPES.flatMap((shape) =>
 );
 
 const GROUPS: readonly PlotGroup[] = [1, 2, 3, 4];
-const MIN_PLOT_SIDE = 20;
-const MAX_PLOT_SIDE = 50;
-const MAX_LEAF_SIDE = 58;
-const MAX_BSP_DEPTH = 18;
 const DISTRICT_MIN_SPAN = 180;
 const DISTRICT_MAX_SPAN = 430;
 const DISTRICT_SPAN_STEP = 10;
+const MAX_BSP_DEPTH = 36;
 
 const mulberry32 = (seed: number) => {
   let state = seed >>> 0;
@@ -165,8 +168,8 @@ const mulberry32 = (seed: number) => {
 };
 
 const pickWeighted = <T>(items: readonly T[], weightFor: (item: T) => number, random: () => number) => {
-  const totalWeight = items.reduce((sum, item) => sum + Math.max(0, weightFor(item)), 0);
   if (items.length === 0) return undefined;
+  const totalWeight = items.reduce((sum, item) => sum + Math.max(0, weightFor(item)), 0);
   if (totalWeight <= 0) return items[Math.floor(random() * items.length)];
 
   let cursor = random() * totalWeight;
@@ -179,8 +182,6 @@ const pickWeighted = <T>(items: readonly T[], weightFor: (item: T) => number, ra
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-
-const snapDown = (value: number, step = DISTRICT_SPAN_STEP) => Math.floor(value / step) * step;
 
 const randomInt = (min: number, max: number, random: () => number) =>
   Math.floor(random() * (max - min + 1)) + min;
@@ -197,14 +198,11 @@ const groupWeight = (counts: PlotGroupCounts, group: PlotGroup, config: PlotLayo
   const total = GROUPS.reduce((sum, entry) => sum + counts[entry], 0);
   const currentRatio = total > 0 ? counts[group] / total : 0;
   const deficit = config.targetGroupRatios[group] - currentRatio;
-  return Math.max(0.05, config.targetGroupRatios[group] + deficit * 4.8);
+  return Math.max(0.04, config.targetGroupRatios[group] + deficit * 4.2);
 };
 
 const exactShapeFor = (width: number, depth: number) =>
   PLOT_SHAPES.find((shape) => shape.width === width && shape.depth === depth) ?? null;
-
-const fittingShapesFor = (rect: Pick<Rect, "width" | "depth">) =>
-  PLOT_SHAPES.filter((shape) => shape.width <= rect.width && shape.depth <= rect.depth);
 
 const makePlot = (id: string, districtId: string, rect: Rect, shape: PlotShape): Plot => {
   const area = shape.width * shape.depth;
@@ -220,7 +218,8 @@ const makePlot = (id: string, districtId: string, rect: Rect, shape: PlotShape):
     area,
     centerX: rect.x + shape.width / 2,
     centerZ: rect.z + shape.depth / 2,
-    sizeClass: sizeClassForGroup(shape.group)
+    sizeClass: sizeClassForGroup(shape.group),
+    ownerAgentId: null
   };
 };
 
@@ -229,126 +228,62 @@ const pushPathRect = (pathRects: PlotPathRect[], x: number, z: number, width: nu
   pathRects.push({ x, z, width, depth });
 };
 
-const pushPublicSpace = (publicOpenSpaces: PublicOpenSpace[], districtId: string, rect: Rect) => {
-  if (rect.width <= 0 || rect.depth <= 0) return;
-  publicOpenSpaces.push({
-    id: `open-${publicOpenSpaces.length + 1}`,
-    districtId,
-    x: rect.x,
-    z: rect.z,
-    width: rect.width,
-    depth: rect.depth,
-    area: rect.width * rect.depth
-  });
-};
+const buildComposableLengths = (config: PlotLayoutConfig): ComposableLengths => {
+  const all = new Set<number>(config.sideLengthOptions);
+  let changed = true;
 
-const addPublicRemainderAroundPlot = (
-  publicOpenSpaces: PublicOpenSpace[],
-  districtId: string,
-  rect: Rect,
-  plotRect: Rect
-) => {
-  const rightWidth = rect.x + rect.width - (plotRect.x + plotRect.width);
-  const bottomDepth = rect.z + rect.depth - (plotRect.z + plotRect.depth);
-
-  pushPublicSpace(publicOpenSpaces, districtId, {
-    x: plotRect.x + plotRect.width,
-    z: rect.z,
-    width: rightWidth,
-    depth: rect.depth
-  });
-  pushPublicSpace(publicOpenSpaces, districtId, {
-    x: rect.x,
-    z: plotRect.z + plotRect.depth,
-    width: plotRect.width,
-    depth: bottomDepth
-  });
-};
-
-const fitPlotOrPublic = (
-  rect: Rect,
-  districtId: string,
-  counts: PlotGroupCounts,
-  config: PlotLayoutConfig,
-  random: () => number,
-  plots: Plot[],
-  publicOpenSpaces: PublicOpenSpace[]
-) => {
-  const fittingShapes = fittingShapesFor(rect);
-  if (fittingShapes.length === 0) {
-    pushPublicSpace(publicOpenSpaces, districtId, rect);
-    return;
+  while (changed) {
+    changed = false;
+    const current = [...all];
+    for (const a of current) {
+      for (const b of current) {
+        const combined = a + config.pathWidthBlocks + b;
+        if (combined > DISTRICT_MAX_SPAN || all.has(combined)) continue;
+        all.add(combined);
+        changed = true;
+      }
+    }
   }
 
-  const exact = exactShapeFor(rect.width, rect.depth);
-  const shape =
-    exact ??
-    pickWeighted(
-      fittingShapes,
-      (candidate) => {
-        const groupBias = groupWeight(counts, candidate.group, config);
-        const fillRatio = (candidate.width * candidate.depth) / Math.max(1, rect.width * rect.depth);
-        const edgeFit =
-          (candidate.width === rect.width ? 0.55 : 0) +
-          (candidate.depth === rect.depth ? 0.55 : 0);
-        return groupBias * (0.55 + fillRatio + edgeFit);
-      },
-      random
-    ) ??
-    fittingShapes[0];
-
-  const plotRect: Rect = {
-    x: rect.x,
-    z: rect.z,
-    width: shape.width,
-    depth: shape.depth
+  return {
+    all,
+    district: [...all].filter((length) => length >= DISTRICT_MIN_SPAN).sort((a, b) => a - b)
   };
-
-  plots.push(makePlot(`plot-${plots.length + 1}`, districtId, plotRect, shape));
-  counts[shape.group] += 1;
-  addPublicRemainderAroundPlot(publicOpenSpaces, districtId, rect, plotRect);
 };
 
-const splitCandidatesForAxis = (length: number, pathWidth: number) => {
+const splitCandidatesForLength = (length: number, lengths: ComposableLengths, pathWidth: number) => {
   const candidates: Array<{ before: number; after: number }> = [];
-  const minBefore = MIN_PLOT_SIDE;
-  const maxBefore = length - pathWidth - MIN_PLOT_SIDE;
-  if (maxBefore < minBefore) return candidates;
-
-  const preferredStops = new Set<number>();
-  for (const side of [20, 30, 40, 50, 62, 72, 82, 92, 112, 132, 152] as const) {
-    preferredStops.add(side);
-    preferredStops.add(length - pathWidth - side);
+  for (const before of lengths.all) {
+    const after = length - before - pathWidth;
+    if (after > 0 && lengths.all.has(after)) candidates.push({ before, after });
   }
-
-  const balancedStart = snapDown(length * 0.28);
-  const balancedEnd = snapDown(length * 0.72);
-  for (let before = balancedStart; before <= balancedEnd; before += DISTRICT_SPAN_STEP) {
-    preferredStops.add(before);
-  }
-
-  for (const before of preferredStops) {
-    const snapped = snapDown(before);
-    const after = length - snapped - pathWidth;
-    if (snapped >= minBefore && after >= MIN_PLOT_SIDE) candidates.push({ before: snapped, after });
-  }
-
-  return [...new Map(candidates.map((candidate) => [`${candidate.before}:${candidate.after}`, candidate])).values()];
+  return candidates;
 };
 
-const childPotential = (rect: Pick<Rect, "width" | "depth">, counts: PlotGroupCounts, config: PlotLayoutConfig) => {
-  const fitting = fittingShapesFor(rect);
-  if (fitting.length === 0) return 0.01;
-
+const childScore = (
+  rect: Pick<Rect, "width" | "depth">,
+  lengths: ComposableLengths,
+  counts: PlotGroupCounts,
+  config: PlotLayoutConfig
+) => {
   const exact = exactShapeFor(rect.width, rect.depth);
-  const groupScore = fitting.reduce((sum, shape) => sum + groupWeight(counts, shape.group, config), 0) / fitting.length;
-  const sideScore =
-    Math.max(0, 1 - Math.abs(rect.width - MAX_PLOT_SIDE) / MAX_LEAF_SIDE) +
-    Math.max(0, 1 - Math.abs(rect.depth - MAX_PLOT_SIDE) / MAX_LEAF_SIDE);
-  return groupScore + sideScore * 0.45 + (exact ? 1.4 : 0);
+  if (exact) return 2.8 + groupWeight(counts, exact.group, config);
+
+  const canSplitX = splitCandidatesForLength(rect.width, lengths, config.pathWidthBlocks).length > 0;
+  const canSplitZ = splitCandidatesForLength(rect.depth, lengths, config.pathWidthBlocks).length > 0;
+  const aspect = Math.max(rect.width / rect.depth, rect.depth / rect.width);
+  const aspectScore = Math.max(0.25, 1.4 - Math.abs(aspect - 1.55) * 0.3);
+
+  return (canSplitX || canSplitZ ? 1 : 0.02) * aspectScore;
 };
 
-const splitWeight = (rect: Rect, split: SplitCandidate, counts: PlotGroupCounts, config: PlotLayoutConfig) => {
+const splitWeight = (
+  rect: Rect,
+  split: SplitCandidate,
+  lengths: ComposableLengths,
+  counts: PlotGroupCounts,
+  config: PlotLayoutConfig
+) => {
   const childA = split.axis === "x"
     ? { width: split.before, depth: rect.depth }
     : { width: rect.width, depth: split.before };
@@ -358,38 +293,16 @@ const splitWeight = (rect: Rect, split: SplitCandidate, counts: PlotGroupCounts,
 
   const balance = Math.min(split.before, split.after) / Math.max(split.before, split.after);
   const orientationBias =
-    (rect.width > rect.depth * 1.22 && split.axis === "x") || (rect.depth > rect.width * 1.22 && split.axis === "z")
-      ? 1.35
+    (rect.width > rect.depth * 1.25 && split.axis === "x") ||
+    (rect.depth > rect.width * 1.25 && split.axis === "z")
+      ? 1.3
       : 1;
+
   return (
-    (childPotential(childA, counts, config) + childPotential(childB, counts, config)) *
-    (0.42 + balance) *
+    (childScore(childA, lengths, counts, config) + childScore(childB, lengths, counts, config)) *
+    (0.35 + balance) *
     orientationBias
   );
-};
-
-const chooseSplit = (
-  rect: Rect,
-  counts: PlotGroupCounts,
-  config: PlotLayoutConfig,
-  random: () => number
-): SplitCandidate | null => {
-  const pathWidth = config.pathWidthBlocks;
-  const candidates: SplitCandidate[] = [
-    ...splitCandidatesForAxis(rect.width, pathWidth).map((split) => ({
-      axis: "x" as const,
-      before: split.before,
-      after: split.after
-    })),
-    ...splitCandidatesForAxis(rect.depth, pathWidth).map((split) => ({
-      axis: "z" as const,
-      before: split.before,
-      after: split.after
-    }))
-  ];
-
-  if (candidates.length === 0) return null;
-  return pickWeighted(candidates, (candidate) => splitWeight(rect, candidate, counts, config), random) ?? candidates[0];
 };
 
 const splitRect = (rect: Rect, split: SplitCandidate, pathWidth: number, pathRects: PlotPathRect[]) => {
@@ -408,72 +321,103 @@ const splitRect = (rect: Rect, split: SplitCandidate, pathWidth: number, pathRec
   ] satisfies [Rect, Rect];
 };
 
-const shouldStopAtLeaf = (rect: Rect, depth: number, random: () => number) => {
-  if (depth >= MAX_BSP_DEPTH) return true;
-  if (rect.width <= MAX_LEAF_SIDE && rect.depth <= MAX_LEAF_SIDE) return true;
+const orderedSplitCandidates = (
+  rect: Rect,
+  lengths: ComposableLengths,
+  counts: PlotGroupCounts,
+  config: PlotLayoutConfig,
+  random: () => number
+) => {
+  const pathWidth = config.pathWidthBlocks;
+  const candidates: SplitCandidate[] = [
+    ...splitCandidatesForLength(rect.width, lengths, pathWidth).map((split) => ({
+      axis: "x" as const,
+      before: split.before,
+      after: split.after
+    })),
+    ...splitCandidatesForLength(rect.depth, lengths, pathWidth).map((split) => ({
+      axis: "z" as const,
+      before: split.before,
+      after: split.after
+    }))
+  ];
 
-  const area = rect.width * rect.depth;
-  if (area <= 3000 && rect.width <= 68 && rect.depth <= 68) return random() < 0.16;
-  return false;
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      score: splitWeight(rect, candidate, lengths, counts, config) * (0.75 + random() * 0.5)
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.candidate);
 };
 
-const subdivideDistrict = (
+const subdivideExact = (
   rect: Rect,
   districtId: string,
   depth: number,
+  lengths: ComposableLengths,
   counts: PlotGroupCounts,
   config: PlotLayoutConfig,
   random: () => number,
   plots: Plot[],
-  pathRects: PlotPathRect[],
-  publicOpenSpaces: PublicOpenSpace[]
-) => {
+  pathRects: PlotPathRect[]
+): boolean => {
   const exact = exactShapeFor(rect.width, rect.depth);
   if (exact) {
     plots.push(makePlot(`plot-${plots.length + 1}`, districtId, rect, exact));
     counts[exact.group] += 1;
-    return;
+    return true;
   }
 
-  const chosenSplit = shouldStopAtLeaf(rect, depth, random)
-    ? null
-    : chooseSplit(rect, counts, config, random);
+  if (depth >= MAX_BSP_DEPTH) return false;
 
-  if (!chosenSplit) {
-    fitPlotOrPublic(rect, districtId, counts, config, random, plots, publicOpenSpaces);
-    return;
+  for (const split of orderedSplitCandidates(rect, lengths, counts, config, random)) {
+    const localPlots: Plot[] = [];
+    const localPaths: PlotPathRect[] = [];
+    const localCounts: PlotGroupCounts = { ...counts };
+    const children = splitRect(rect, split, config.pathWidthBlocks, localPaths);
+    const first = random() < 0.5 ? children[0] : children[1];
+    const second = first === children[0] ? children[1] : children[0];
+
+    if (
+      subdivideExact(first, districtId, depth + 1, lengths, localCounts, config, random, localPlots, localPaths) &&
+      subdivideExact(second, districtId, depth + 1, lengths, localCounts, config, random, localPlots, localPaths)
+    ) {
+      Object.assign(counts, localCounts);
+      plots.push(...localPlots);
+      pathRects.push(...localPaths);
+      return true;
+    }
   }
 
-  const children = splitRect(rect, chosenSplit, config.pathWidthBlocks, pathRects);
-  const first = random() < 0.5 ? children[0] : children[1];
-  const second = first === children[0] ? children[1] : children[0];
-
-  subdivideDistrict(first, districtId, depth + 1, counts, config, random, plots, pathRects, publicOpenSpaces);
-  subdivideDistrict(second, districtId, depth + 1, counts, config, random, plots, pathRects, publicOpenSpaces);
+  return false;
 };
 
-const makeDistrictSpan = (remaining: number, random: () => number) => {
-  const max = Math.min(DISTRICT_MAX_SPAN, remaining);
-  if (max < DISTRICT_MIN_SPAN) return null;
-  return randomSnapped(DISTRICT_MIN_SPAN, max, random);
+const chooseDistrictLength = (remaining: number, lengths: ComposableLengths, random: () => number) => {
+  const candidates = lengths.district.filter((length) => length <= remaining);
+  if (candidates.length === 0) return null;
+
+  return pickWeighted(
+    candidates,
+    (length) => Math.max(0.1, 1.1 - Math.abs(length - 300) / 260),
+    random
+  ) ?? candidates[candidates.length - 1];
 };
 
-const makeRaggedRows = (world: FlatWorld, config: PlotLayoutConfig, random: () => number) => {
+const makeRaggedRows = (world: FlatWorld, config: PlotLayoutConfig, lengths: ComposableLengths, random: () => number) => {
   const rows: Array<{ z: number; depth: number; left: number; right: number }> = [];
   const centerZ = world.depth / 2;
   let z = config.marginBlocks + randomSnapped(0, 80, random);
   const maxZ = world.depth - config.marginBlocks;
 
   while (z + DISTRICT_MIN_SPAN <= maxZ) {
-    const remaining = maxZ - z;
-    const depth = makeDistrictSpan(remaining, random);
+    const depth = chooseDistrictLength(maxZ - z, lengths, random);
     if (depth === null) break;
 
     const rowCenter = z + depth / 2;
     const normalizedZ = Math.abs(rowCenter - centerZ) / (world.depth / 2);
-    const edgeInset = Math.floor(Math.max(0, normalizedZ - 0.32) * 420);
-    const wobble = randomSnapped(0, 150, random);
-    const left = config.marginBlocks + edgeInset + wobble;
+    const edgeInset = Math.floor(Math.max(0, normalizedZ - 0.32) * 430);
+    const left = config.marginBlocks + edgeInset + randomSnapped(0, 150, random);
     const right = world.width - config.marginBlocks - edgeInset - randomSnapped(0, 160, random);
     if (right - left >= DISTRICT_MIN_SPAN) rows.push({ z, depth, left, right });
     z += depth + config.pathWidthBlocks;
@@ -482,9 +426,9 @@ const makeRaggedRows = (world: FlatWorld, config: PlotLayoutConfig, random: () =
   return rows;
 };
 
-const makeDistricts = (world: FlatWorld, config: PlotLayoutConfig, random: () => number) => {
+const makeDistricts = (world: FlatWorld, config: PlotLayoutConfig, lengths: ComposableLengths, random: () => number) => {
   const districts: DistrictBlock[] = [];
-  const rows = makeRaggedRows(world, config, random);
+  const rows = makeRaggedRows(world, config, lengths, random);
   const centerX = world.width / 2;
   const centerZ = world.depth / 2;
 
@@ -492,8 +436,7 @@ const makeDistricts = (world: FlatWorld, config: PlotLayoutConfig, random: () =>
     let x = row.left + randomSnapped(0, 70, random);
 
     while (x + DISTRICT_MIN_SPAN <= row.right) {
-      const remaining = row.right - x;
-      const width = makeDistrictSpan(remaining, random);
+      const width = chooseDistrictLength(row.right - x, lengths, random);
       if (width === null) break;
 
       const district: DistrictBlock = {
@@ -643,19 +586,28 @@ export const generatePlotLayout = (
   config: PlotLayoutConfig = DEFAULT_PLOT_LAYOUT_CONFIG
 ): PlotLayout => {
   const random = mulberry32(config.seed);
+  const lengths = buildComposableLengths(config);
   const counts: PlotGroupCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-  const districts = makeDistricts(world, config, random);
+  const candidateDistricts = makeDistricts(world, config, lengths, random);
+  const districts: DistrictBlock[] = [];
   const plots: Plot[] = [];
   const pathRects: PlotPathRect[] = [];
   const publicOpenSpaces: PublicOpenSpace[] = [];
 
-  for (const district of districts) {
-    const firstPlotCount = plots.length;
-    subdivideDistrict(district, district.id, 0, counts, config, random, plots, pathRects, publicOpenSpaces);
+  for (const district of candidateDistricts) {
+    const districtPlots: Plot[] = [];
+    const districtPaths: PlotPathRect[] = [];
+    const nextCounts: PlotGroupCounts = { ...counts };
 
-    if (plots.length > firstPlotCount) {
-      addDistrictPerimeterPath(district, pathRects, config, world);
+    if (!subdivideExact(district, district.id, 0, lengths, nextCounts, config, random, districtPlots, districtPaths)) {
+      continue;
     }
+
+    Object.assign(counts, nextCounts);
+    districts.push(district);
+    plots.push(...districtPlots);
+    pathRects.push(...districtPaths);
+    addDistrictPerimeterPath(district, pathRects, config, world);
   }
 
   const bounds = normalizeLayoutToOrigin(districts, plots, pathRects, publicOpenSpaces);

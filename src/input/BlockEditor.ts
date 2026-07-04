@@ -12,6 +12,7 @@ type BlockEditorOptions = {
   editableRenderer: EditableBlockRenderer;
   terrainGroup: THREE.Group;
   setHiddenTopColumns: (hiddenColumns: ReadonlySet<string>) => void;
+  inspectTerrainColumn?: (x: number, z: number) => boolean;
 };
 
 export type BlockEditorState = {
@@ -101,6 +102,15 @@ export class BlockEditor {
     }
 
     if (event.button === 0) {
+      if (
+        target.source === "terrain" &&
+        target.normal.y > 0 &&
+        this.options.inspectTerrainColumn?.(target.block.x, target.block.z)
+      ) {
+        this.state.lastAction = "Selected plot";
+        return;
+      }
+
       this.breakBlock(target);
       return;
     }

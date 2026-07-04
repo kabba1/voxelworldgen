@@ -3,6 +3,7 @@ import "./styles.css";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { BlockEditor } from "./input/BlockEditor";
 import { PlayerCameraController } from "./input/PlayerCameraController";
+import { PlotInspector } from "./input/PlotInspector";
 import { EditableBlockRenderer } from "./render/editableBlocks";
 import { GoodVibesSky } from "./render/skybox";
 import { buildFlatTerrain } from "./render/terrainMesh";
@@ -77,11 +78,13 @@ let stats: StatsOverlay | null = null;
 let sky: GoodVibesSky | null = null;
 let editor: BlockEditor | null = null;
 let editableRenderer: EditableBlockRenderer | null = null;
+let plotInspector: PlotInspector | null = null;
 let lastTime = performance.now();
 
 const dispose = () => {
   controller?.dispose();
   editor?.dispose();
+  plotInspector?.dispose();
   editableRenderer?.dispose();
   stats?.dispose();
   sky?.dispose();
@@ -104,6 +107,8 @@ const start = () => {
 
   editableRenderer = new EditableBlockRenderer(world, materials);
   scene.add(editableRenderer.group);
+  plotInspector = new PlotInspector({ camera, domElement: renderer.domElement, terrainGroup: terrain, world });
+  scene.add(plotInspector.group);
 
   camera.position.set(-34, world.worldHeight() + 1.7, 54);
   const target = new THREE.Vector3(camera.position.x + 5, world.worldHeight(), camera.position.z - 5);
@@ -117,7 +122,8 @@ const start = () => {
     editableWorld,
     editableRenderer,
     terrainGroup: terrain,
-    setHiddenTopColumns
+    setHiddenTopColumns,
+    inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false
   });
 
   stats = new StatsOverlay(
