@@ -10,6 +10,7 @@ import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { BLOCKS } from "./world/blocks";
 import { EditableWorld } from "./world/editableWorld";
 import { FlatWorld } from "./world/flatWorld";
+import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
 import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 
@@ -18,7 +19,7 @@ if (!app) throw new Error("Missing #app root.");
 
 const seedWorld = new FlatWorld();
 const plotLayout = generatePlotLayout(seedWorld);
-const world = new FlatWorld({
+const world = new PlotWorld(plotLayout, {
   width: Math.max(1, plotLayout.bounds.maxX),
   depth: Math.max(1, plotLayout.bounds.maxZ),
   blockSize: seedWorld.blockSize,
@@ -95,7 +96,7 @@ const start = () => {
   scene.add(sky.group);
 
   const materials = loadTerrainMaterials();
-  const surfaceBlocks = buildSurfaceBlockMap(world, plotLayout);
+  const surfaceBlocks = buildSurfaceBlockMap(world);
   const editableWorld = new EditableWorld(world, surfaceBlocks.blockAt);
   const { group: terrain, stats: worldStats, setHiddenTopColumns } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
   scene.add(terrain);
