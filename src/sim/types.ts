@@ -58,6 +58,7 @@ export type BuildingFunctionId =
   | "learn_blueprint"
   | "propose_project"
   | "reserve_resources"
+  | "claim_home"
   | "build_project"
   | "rest"
   | "produce_food"
@@ -229,4 +230,5 @@ export type CityState = {
   buildings: CityBuilding[];
   projects: Project[];
   transactions: Transaction[];
+  events: string[];
 };

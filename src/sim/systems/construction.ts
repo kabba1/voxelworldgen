@@ -1,5 +1,6 @@
 import { BLUEPRINT_BY_ID } from "../blueprints";
 import { BUILDING_TYPE_COLORS } from "../buildingMetadata";
+import { appendCityEvent } from "../events";
 import { createResourceInventory } from "../resources";
 import type { Agent, CityBuilding, CityState } from "../types";
 
@@ -50,7 +51,12 @@ export const updateConstruction = (state: CityState): CityState => {
   }
 
   const project = state.projects[projectIndex];
-  const contributors = state.agents.filter(canContributeConstructionLabor);
+  const contributors = state.agents.filter(
+    (agent) =>
+      agent.currentAction?.functionId === "build_project" &&
+      agent.currentAction.projectId === project.id &&
+      canContributeConstructionLabor(agent)
+  );
   if (contributors.length === 0) return state;
 
   const progressLabor = Math.min(project.requiredLabor, project.progressLabor + contributors.length);
@@ -60,7 +66,7 @@ export const updateConstruction = (state: CityState): CityState => {
   const isComplete = progressLabor >= project.requiredLabor;
   const completedBuilding = isComplete ? buildingFromCompletedProject(state, projectIndex) : null;
 
-  return {
+  const nextState: CityState = {
     ...state,
     agents: state.agents.map((agent) =>
       contributorIdSet.has(agent.id)
@@ -70,13 +76,7 @@ export const updateConstruction = (state: CityState): CityState => {
               ...agent.needs,
               rest: clampNeed(agent.needs.rest - CONSTRUCTION_REST_COST)
             },
-            currentAction: {
-              id: `action-build-${state.tick}-${agent.id}`,
-              functionId: "build_project",
-              targetBuildingId: null,
-              projectId: project.id,
-              remainingTicks: 1
-            }
+            currentAction: agent.currentAction
           }
         : agent.currentAction?.functionId === "build_project"
           ? { ...agent, currentAction: null }
@@ -98,4 +98,6 @@ export const updateConstruction = (state: CityState): CityState => {
         : entry
     )
   };
+
+  return completedBuilding ? appendCityEvent(nextState, `${project.id} completed ${completedBuilding.name}`) : nextState;
 };

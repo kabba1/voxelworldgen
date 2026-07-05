@@ -90,6 +90,7 @@ export const createInitialCityState = (options: CreateInitialCityStateOptions = 
     agents: STARTING_AGENT_NAMES.map((name, index) => createFounderAgent(name, index, charterHall.id)),
     buildings: [charterHall],
     projects: [],
-    transactions: []
+    transactions: [],
+    events: []
   };
 };

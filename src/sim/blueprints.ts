@@ -12,7 +12,7 @@ export const STARTING_BLUEPRINTS = [
     buildWidth: 8,
     buildLength: 10,
     buildHeight: 5,
-    functionsUnlocked: ["rest", "store_resource"],
+    functionsUnlocked: ["claim_home", "rest", "store_resource"],
     capacity: 2
   },
   {

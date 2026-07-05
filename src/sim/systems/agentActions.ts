@@ -1,11 +1,9 @@
+import { appendCityEvents } from "../events";
 import { createResourceInventory } from "../resources";
 import type { Agent, CityBuilding, CityState, ResourceInventory } from "../types";
 
-const FOOD_EAT_THRESHOLD = 70;
 const FOOD_RECOVERY = 25;
-const HOME_REST_THRESHOLD = 85;
 const HOME_REST_RECOVERY = 3;
-const TEMP_REST_THRESHOLD = 55;
 const TEMP_REST_RECOVERY = 0.75;
 const SHELTER_RECOVERY = 2;
 
@@ -16,18 +14,26 @@ const cloneInventory = (inventory: ResourceInventory): ResourceInventory => crea
 const hasResidentSlot = (building: CityBuilding) => building.type === "home" && building.residents.length < building.capacity;
 
 export const assignHousing = (state: CityState): CityState => {
+  const events: string[] = [];
   const buildings = state.buildings.map((building) => ({
     ...building,
     residents: [...building.residents]
   }));
 
   const agents = state.agents.map((agent) => {
-    if (agent.homeBuildingId !== null) return agent;
+    if (
+      agent.homeBuildingId !== null ||
+      agent.currentAction?.functionId !== "claim_home" ||
+      agent.currentAction.targetBuildingId === null
+    ) {
+      return agent;
+    }
 
-    const home = buildings.find(hasResidentSlot);
+    const home = buildings.find((building) => building.id === agent.currentAction?.targetBuildingId && hasResidentSlot(building));
     if (!home) return agent;
 
     home.residents.push(agent.id);
+    events.push(`${agent.name} claimed ${home.id}`);
     return {
       ...agent,
       homeBuildingId: home.id,
@@ -35,29 +41,48 @@ export const assignHousing = (state: CityState): CityState => {
     };
   });
 
-  return { ...state, agents, buildings };
+  return appendCityEvents({ ...state, agents, buildings }, events);
 };
 
-export const produceFood = (state: CityState): CityState => ({
-  ...state,
-  buildings: state.buildings.map((building) =>
-    building.type === "food"
-      ? {
-          ...building,
-          inventory: {
-            ...building.inventory,
-            food: building.inventory.food + 1
-          }
-        }
-      : building
-  )
-});
+export const produceFood = (state: CityState): CityState => {
+  const events: string[] = [];
+  const buildings = state.buildings.map((building) => ({
+    ...building,
+    inventory: cloneInventory(building.inventory)
+  }));
+
+  for (const agent of state.agents) {
+    if (agent.currentAction?.functionId !== "produce_food" || agent.currentAction.targetBuildingId === null) continue;
+
+    const building = buildings.find(
+      (entry) =>
+        entry.id === agent.currentAction?.targetBuildingId &&
+        entry.type === "food" &&
+        entry.functionIds.includes("produce_food")
+    );
+    if (!building) continue;
+
+    building.inventory.food += 1;
+    events.push(`${agent.name} produced food at ${building.id}`);
+  }
+
+  return appendCityEvents({ ...state, buildings }, events);
+};
 
 const consumeFood = (
   buildings: CityBuilding[],
-  publicStockpile: ResourceInventory
+  publicStockpile: ResourceInventory,
+  preferredBuildingId: string | null
 ): { buildings: CityBuilding[]; publicStockpile: ResourceInventory; sourceBuildingId: string | null; consumed: boolean } => {
-  const foodBuildingIndex = buildings.findIndex((building) => building.type === "food" && building.inventory.food > 0);
+  const preferredIndex =
+    preferredBuildingId === null
+      ? -1
+      : buildings.findIndex((building) => building.id === preferredBuildingId && building.inventory.food > 0);
+  const foodBuildingIndex =
+    preferredIndex >= 0
+      ? preferredIndex
+      : buildings.findIndex((building) => building.type === "food" && building.inventory.food > 0);
+
   if (foodBuildingIndex >= 0) {
     return {
       publicStockpile,
@@ -90,24 +115,35 @@ const consumeFood = (
   };
 };
 
+const updateShelterFromHome = (agent: Agent): Agent => {
+  if (agent.homeBuildingId === null) return agent;
+  return {
+    ...agent,
+    needs: {
+      ...agent.needs,
+      shelter: clampNeed(agent.needs.shelter + SHELTER_RECOVERY)
+    }
+  };
+};
+
 export const updateAgentNeedsFromBuildings = (state: CityState): CityState => {
+  const events: string[] = [];
   let buildings = state.buildings;
   let publicStockpile = cloneInventory(state.publicStockpile);
-  const charterHallId = state.buildings.find((building) => building.type === "charter_hall")?.id ?? null;
 
   const agents = state.agents.map((agent): Agent => {
-    let nextAgent = agent;
-    let ateFromBuildingId: string | null = null;
+    let nextAgent = updateShelterFromHome(agent);
 
-    if (nextAgent.needs.food < FOOD_EAT_THRESHOLD) {
-      const foodResult = consumeFood(buildings, publicStockpile);
+    if (nextAgent.currentAction?.functionId === "buy_food") {
+      const foodResult = consumeFood(buildings, publicStockpile, nextAgent.currentAction.targetBuildingId);
       buildings = foodResult.buildings;
       publicStockpile = foodResult.publicStockpile;
-      ateFromBuildingId = foodResult.sourceBuildingId;
 
       if (foodResult.consumed) {
+        events.push(`${nextAgent.name} ate food`);
         nextAgent = {
           ...nextAgent,
+          currentBuildingId: foodResult.sourceBuildingId ?? nextAgent.currentBuildingId,
           needs: {
             ...nextAgent.needs,
             food: clampNeed(nextAgent.needs.food + FOOD_RECOVERY)
@@ -116,49 +152,24 @@ export const updateAgentNeedsFromBuildings = (state: CityState): CityState => {
       }
     }
 
-    const hasHome = nextAgent.homeBuildingId !== null;
-    const shouldRestAtHome = hasHome && nextAgent.needs.rest < HOME_REST_THRESHOLD;
-    const shouldUseTemporaryRest = !hasHome && charterHallId !== null && nextAgent.needs.rest < TEMP_REST_THRESHOLD;
-    const restRecovery = shouldRestAtHome ? HOME_REST_RECOVERY : shouldUseTemporaryRest ? TEMP_REST_RECOVERY : 0;
-
-    if (hasHome || restRecovery > 0) {
-      nextAgent = {
-        ...nextAgent,
-        needs: {
-          ...nextAgent.needs,
-          shelter: hasHome ? clampNeed(nextAgent.needs.shelter + SHELTER_RECOVERY) : nextAgent.needs.shelter,
-          rest: restRecovery > 0 ? clampNeed(nextAgent.needs.rest + restRecovery) : nextAgent.needs.rest
-        }
-      };
+    if (nextAgent.currentAction?.functionId !== "rest" || nextAgent.currentAction.targetBuildingId === null) {
+      return nextAgent;
     }
 
-    if (nextAgent.currentAction?.functionId === "build_project") return nextAgent;
-    if (ateFromBuildingId !== null || nextAgent.needs.food > agent.needs.food) {
-      return {
-        ...nextAgent,
-        currentAction: {
-          id: `action-eat-${state.tick}-${nextAgent.id}`,
-          functionId: "buy_food",
-          targetBuildingId: ateFromBuildingId,
-          projectId: null,
-          remainingTicks: 1
-        }
-      };
-    }
-    if (restRecovery > 0) {
-      return {
-        ...nextAgent,
-        currentAction: {
-          id: `action-rest-${state.tick}-${nextAgent.id}`,
-          functionId: "rest",
-          targetBuildingId: nextAgent.homeBuildingId ?? charterHallId,
-          projectId: null,
-          remainingTicks: 1
-        }
-      };
-    }
-    return { ...nextAgent, currentAction: null };
+    const restBuilding = state.buildings.find((building) => building.id === nextAgent.currentAction?.targetBuildingId);
+    if (!restBuilding || !restBuilding.functionIds.includes("rest")) return nextAgent;
+
+    const isHomeRest = nextAgent.homeBuildingId === restBuilding.id;
+    const restRecovery = isHomeRest ? HOME_REST_RECOVERY : TEMP_REST_RECOVERY;
+    return {
+      ...nextAgent,
+      currentBuildingId: restBuilding.id,
+      needs: {
+        ...nextAgent.needs,
+        rest: clampNeed(nextAgent.needs.rest + restRecovery)
+      }
+    };
   });
 
-  return { ...state, agents, buildings, publicStockpile };
+  return appendCityEvents({ ...state, agents, buildings, publicStockpile }, events);
 };

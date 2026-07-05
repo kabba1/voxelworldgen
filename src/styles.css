@@ -75,6 +75,7 @@ canvas {
 }
 
 .sim-debug__agent,
-.sim-debug__project {
+.sim-debug__project,
+.sim-debug__event {
   overflow-wrap: anywhere;
 }

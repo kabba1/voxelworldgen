@@ -1,4 +1,5 @@
 import type { Agent, AgentNeedId, CityState } from "./types";
+import { applySimpleAgentPolicy } from "./agents/simplePolicy";
 import { assignHousing, produceFood, updateAgentNeedsFromBuildings } from "./systems/agentActions";
 import { updateConstruction } from "./systems/construction";
 import { updateProjects } from "./systems/projects";
@@ -36,7 +37,8 @@ export const tickCityState = (state: CityState): CityState => {
   };
 
   const projectState = updateProjects(decayedState);
-  const constructionState = updateConstruction(projectState);
+  const actionState = applySimpleAgentPolicy(projectState);
+  const constructionState = updateConstruction(actionState);
   const housedState = assignHousing(constructionState);
   const foodState = produceFood(housedState);
   return updateAgentNeedsFromBuildings(foodState);

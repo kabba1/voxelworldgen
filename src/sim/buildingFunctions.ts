@@ -43,6 +43,14 @@ export const BUILDING_FUNCTIONS = [
     capacity: 6
   },
   {
+    id: "claim_home",
+    label: "Claim Home",
+    buildingTypes: ["home", "charter_hall"],
+    requiresWorker: false,
+    durationTicks: 1,
+    capacity: 12
+  },
+  {
     id: "build_project",
     label: "Build Project",
     buildingTypes: ["charter_hall", "workshop"],

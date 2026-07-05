@@ -1,11 +1,18 @@
 import { selectCityNeeds, selectCompletedBuildingTypeCounts } from "../sim/selectors";
-import type { Agent } from "../sim/types";
-import type { AgentNeedId, CityState, ResourceId } from "../sim/types";
+import type { Agent, AgentNeedId, CityState, ResourceId } from "../sim/types";
 
 const STOCKPILE_RESOURCES: readonly ResourceId[] = ["food", "wood", "stone", "tools", "money"];
 const AGENT_NEEDS: readonly AgentNeedId[] = ["food", "rest", "shelter", "money", "knowledge"];
 
 const rounded = (value: number) => Math.round(value).toString();
+
+const actionText = (agent: Agent) => {
+  const action = agent.currentAction;
+  if (action === null) return "none";
+  if (action.projectId !== null) return `${action.functionId} ${action.projectId}`;
+  if (action.targetBuildingId !== null) return `${action.functionId} ${action.targetBuildingId}`;
+  return action.functionId;
+};
 
 const line = (label: string, value: string) => {
   const row = document.createElement("div");
@@ -26,7 +33,7 @@ const line = (label: string, value: string) => {
 const agentLine = (agent: Agent) => {
   const row = document.createElement("div");
   row.className = "sim-debug__agent";
-  row.textContent = `${agent.name} (${agent.homeBuildingId ?? "homeless"}): ${AGENT_NEEDS.map(
+  row.textContent = `${agent.name} (${agent.homeBuildingId ?? "homeless"}) ${actionText(agent)}: ${AGENT_NEEDS.map(
     (need) => `${need} ${rounded(agent.needs[need])}`
   ).join(" | ")}`;
   return row;
@@ -77,6 +84,22 @@ export class SimulationDebugOverlay {
     buildings.className = "sim-debug__section";
     buildings.append(line("types", buildingSummary));
 
+    const events = document.createElement("div");
+    events.className = "sim-debug__section";
+    if (state.events.length === 0) {
+      const emptyEvent = document.createElement("div");
+      emptyEvent.className = "sim-debug__event";
+      emptyEvent.textContent = "no events";
+      events.append(emptyEvent);
+    } else {
+      for (const event of state.events.slice(-10)) {
+        const eventRow = document.createElement("div");
+        eventRow.className = "sim-debug__event";
+        eventRow.textContent = event;
+        events.append(eventRow);
+      }
+    }
+
     const projects = document.createElement("div");
     projects.className = "sim-debug__section";
     const visibleProjects = state.projects.slice(0, 4);
@@ -101,6 +124,7 @@ export class SimulationDebugOverlay {
       stockpile,
       buildings,
       projects,
+      events,
       agents
     );
   }
