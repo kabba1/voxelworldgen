@@ -1,10 +1,12 @@
 import * as THREE from "three";
 import "./styles.css";
+import { SimulationDebugOverlay } from "./debug/simulationDebugOverlay";
 import { PlayerCameraController } from "./input/PlayerCameraController";
 import { ConcreteBoxRenderer } from "./render/concreteBoxRenderer";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { createInitialCityState } from "./sim/createInitialCityState";
+import { tickCityState } from "./sim/tick";
 import { createCenteredBoxTown } from "./world/boxTown";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
@@ -25,16 +27,22 @@ const world = new PlotWorld(plotLayout, {
   dirtDepth: seedWorld.dirtDepth,
   grassDepth: seedWorld.grassDepth
 });
-const initialCityState = createInitialCityState({
+let cityState = createInitialCityState({
   availablePlotIds: plotLayout.plots.map((plot) => plot.id),
   charterPlotId: plotLayout.plots[0]?.id ?? null
 });
+const simDebugOverlay = new SimulationDebugOverlay(app);
+simDebugOverlay.update(cityState);
 console.info("Initial city simulation scaffold", {
-  agents: initialCityState.agents.length,
-  buildings: initialCityState.buildings.length,
-  blueprints: initialCityState.knownBlueprintIds.length,
-  stockpileFood: initialCityState.publicStockpile.food
+  agents: cityState.agents.length,
+  buildings: cityState.buildings.length,
+  blueprints: cityState.knownBlueprintIds.length,
+  stockpileFood: cityState.publicStockpile.food
 });
+const simTimer = window.setInterval(() => {
+  cityState = tickCityState(cityState);
+  simDebugOverlay.update(cityState);
+}, 1000);
 
 const playerEyeHeight = world.blockSize * PLAYER_EYE_HEIGHT_BLOCKS;
 const worldBlockX = (x: number) => (x - world.width / 2) * world.blockSize;
@@ -110,6 +118,8 @@ const dispose = () => {
   disposed = true;
   controller.dispose();
   concreteBoxes.dispose();
+  simDebugOverlay.dispose();
+  window.clearInterval(simTimer);
   window.removeEventListener("resize", onResize);
   renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
   renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
