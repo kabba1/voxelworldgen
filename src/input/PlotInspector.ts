@@ -9,10 +9,18 @@ type PlotInspectorOptions = {
   world: PlotWorld;
   viewerAgentId?: string;
   structureNameForPlot?: (plotId: string) => string | null;
+  inspectableGroups?: THREE.Object3D[];
+  describeColumn?: (x: number, z: number, plot: Plot | null, canBuild: boolean) => InspectionInfo | null;
 };
 
 const INSPECTION_REACH = 1800;
 const HIGHLIGHT_LIFT = 0.035;
+
+export type InspectionInfo = {
+  title: string;
+  rows: Array<[string, string]>;
+  plot?: Plot | null;
+};
 
 const columnFromPoint = (world: PlotWorld, point: THREE.Vector3) => ({
   x: Math.floor(point.x / world.blockSize + world.width / 2),
@@ -55,7 +63,7 @@ export class PlotInspector {
     this.panel.className = "plot-inspector plot-inspector--empty";
     document.body.appendChild(this.panel);
 
-    this.renderPanel(null, false);
+    this.renderPanel(null);
     options.domElement.addEventListener("mousedown", this.onMouseDown);
   }
 
@@ -69,9 +77,9 @@ export class PlotInspector {
 
   inspectColumn(x: number, z: number) {
     const plot = this.options.world.plotAt(x, z);
-    this.selectedPlot = plot;
-    this.renderHighlight(plot);
-    this.renderPanel(plot, plot ? this.options.world.canBuild(this.viewerAgentId(), x, z) : false);
+    const canBuild = plot ? this.options.world.canBuild(this.viewerAgentId(), x, z) : false;
+    const info = this.options.describeColumn?.(x, z, plot, canBuild) ?? this.plotInspectionInfo(plot, canBuild);
+    this.renderInspection(info);
     return true;
   }
 
@@ -84,6 +92,16 @@ export class PlotInspector {
     this.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
     this.raycaster.setFromCamera(this.pointer, this.options.camera);
 
+    const objectHit = this.options.inspectableGroups
+      ?.flatMap((group) => this.raycaster.intersectObjects(group.children, true))
+      .sort((a, b) => a.distance - b.distance)[0];
+    const objectInfo = objectHit ? this.inspectableInfoFor(objectHit.object) : null;
+    if (objectInfo) {
+      event.preventDefault();
+      this.renderInspection(objectInfo);
+      return;
+    }
+
     const hit = this.raycaster.intersectObjects(this.options.terrainGroup.children, true)[0];
     if (!hit) return;
 
@@ -91,6 +109,16 @@ export class PlotInspector {
     const column = columnFromPoint(this.options.world, hit.point);
     this.inspectColumn(column.x, column.z);
   };
+
+  private inspectableInfoFor(object: THREE.Object3D): InspectionInfo | null {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      const inspectInfo = current.userData.inspectInfo;
+      if (typeof inspectInfo === "function") return inspectInfo() as InspectionInfo;
+      current = current.parent;
+    }
+    return null;
+  }
 
   private viewerAgentId() {
     return this.options.viewerAgentId ?? "local-player";
@@ -149,37 +177,52 @@ export class PlotInspector {
     this.group.clear();
   }
 
-  private renderPanel(plot: Plot | null, canBuild: boolean) {
-    this.panel.classList.toggle("plot-inspector--empty", plot === null);
+  private renderInspection(info: InspectionInfo | null) {
+    this.selectedPlot = info?.plot ?? null;
+    this.renderHighlight(this.selectedPlot);
+    this.renderPanel(info);
+  }
+
+  private plotInspectionInfo(plot: Plot | null, canBuild: boolean): InspectionInfo | null {
+    if (!plot) return null;
+
+    const ownerAgentId = plot.ownerAgentId ?? null;
+    const structureName = this.options.structureNameForPlot?.(plot.id) ?? null;
+    return {
+      title: "Plot",
+      plot,
+      rows: [
+        ["id", plot.id],
+        ["land", "claimable plot"],
+        ["structure", structureName ?? "none"],
+        ["group", String(plot.group)],
+        ["width x depth", `${plot.width} x ${plot.depth}`],
+        ["area", String(plot.area)],
+        ["claimed", ownerAgentId ? "claimed" : "unclaimed"],
+        ["ownerAgentId", ownerAgentId ?? "none"],
+        ["canBuild", canBuild ? "yes" : "no"]
+      ]
+    };
+  }
+
+  private renderPanel(info: InspectionInfo | null) {
+    this.panel.classList.toggle("plot-inspector--empty", info === null);
     this.panel.replaceChildren();
 
     const title = document.createElement("div");
     title.className = "plot-inspector__title";
-    setText(title, "Plot");
+    setText(title, info?.title ?? "World");
     this.panel.appendChild(title);
 
-    if (!plot) {
+    if (!info) {
       const empty = document.createElement("div");
       empty.className = "plot-inspector__empty";
-      setText(empty, "No plot selected");
+      setText(empty, "No object selected");
       this.panel.appendChild(empty);
       return;
     }
 
-    const ownerAgentId = plot.ownerAgentId ?? null;
-    const structureName = this.options.structureNameForPlot?.(plot.id) ?? null;
-    const rows: Array<[string, string]> = [
-      ["id", plot.id],
-      ["structure", structureName ?? "none"],
-      ["group", String(plot.group)],
-      ["width x depth", `${plot.width} x ${plot.depth}`],
-      ["area", String(plot.area)],
-      ["claimed", ownerAgentId ? "claimed" : "unclaimed"],
-      ["ownerAgentId", ownerAgentId ?? "none"],
-      ["canBuild", canBuild ? "yes" : "no"]
-    ];
-
-    for (const [label, value] of rows) {
+    for (const [label, value] of info.rows) {
       const row = document.createElement("div");
       row.className = "plot-inspector__row";
 

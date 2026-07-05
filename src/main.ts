@@ -4,8 +4,9 @@ import { installBlueprintDevTools } from "./dev/blueprintDevTools";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { BlockEditor } from "./input/BlockEditor";
 import { PlayerCameraController } from "./input/PlayerCameraController";
-import { PlotInspector } from "./input/PlotInspector";
+import { PlotInspector, type InspectionInfo } from "./input/PlotInspector";
 import { EditableBlockRenderer } from "./render/editableBlocks";
+import { GenesisRenderer } from "./render/genesisRenderer";
 import { StructureRenderer } from "./render/structureRenderer";
 import { GoodVibesSky } from "./render/skybox";
 import { buildFlatTerrain } from "./render/terrainMesh";
@@ -13,13 +14,15 @@ import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { BLOCKS } from "./world/blocks";
 import { EditableWorld } from "./world/editableWorld";
 import { FlatWorld } from "./world/flatWorld";
+import {
+  constructionSummaryForPlot,
+  createGenesisSettlement,
+  plotIsClaimable,
+  publicSiteAt
+} from "./world/genesis";
 import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
-import {
-  createStartingStructureInstances,
-  rotatedFootprint,
-  STRUCTURE_DEFINITIONS_BY_ID
-} from "./world/structures";
+import { STRUCTURE_DEFINITIONS_BY_ID } from "./world/structures";
 import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -38,34 +41,61 @@ const world = new PlotWorld(plotLayout, {
   dirtDepth: seedWorld.dirtDepth,
   grassDepth: seedWorld.grassDepth
 });
-const startingStructures = createStartingStructureInstances(world);
-const structuresByPlotId = new Map<string, typeof startingStructures>();
-for (const instance of startingStructures) {
-  const plotStructures = structuresByPlotId.get(instance.plotId) ?? [];
-  plotStructures.push(instance);
-  structuresByPlotId.set(instance.plotId, plotStructures);
-}
-const starterTownCenter = (() => {
-  let totalX = 0;
-  let totalZ = 0;
-  let count = 0;
-
-  for (const instance of startingStructures) {
-    const definition = STRUCTURE_DEFINITIONS_BY_ID[instance.definitionId];
-    if (!definition) continue;
-    const footprint = rotatedFootprint(definition, instance.rotation);
-    totalX += instance.x + footprint.width / 2;
-    totalZ += instance.z + footprint.depth / 2;
-    count += 1;
-  }
-
-  return count > 0
-    ? { x: totalX / count, z: totalZ / count }
-    : { x: world.width / 2, z: world.depth / 2 };
-})();
+const genesisDistrict = createGenesisSettlement(world);
 const playerEyeHeight = world.blockSize * PLAYER_EYE_HEIGHT_BLOCKS;
 const worldBlockX = (x: number) => (x - world.width / 2) * world.blockSize;
 const worldBlockZ = (z: number) => (z - world.depth / 2) * world.blockSize;
+
+const constructionNamesForPlot = (plotId: string) => {
+  const names = genesisDistrict.constructionSites.flatMap((site) => {
+    const plot = world.plotAt(site.x, site.z);
+    return plot?.id === plotId ? [`${site.name} (${site.status})`] : [];
+  });
+  return names.length > 0 ? names.join(", ") : constructionSummaryForPlot(genesisDistrict, plotId);
+};
+
+const describeGenesisColumn = (
+  x: number,
+  z: number,
+  plot: ReturnType<PlotWorld["plotAt"]>,
+  canBuild: boolean
+): InspectionInfo | null => {
+  const publicSite = publicSiteAt(genesisDistrict, x, z);
+  if (publicSite) {
+    return {
+      title: publicSite.name,
+      rows: [
+        ["land", "public commons"],
+        ["type", publicSite.type],
+        ["condition", publicSite.condition],
+        ["claimable", "no"],
+        ["canBuild", "no"]
+      ]
+    };
+  }
+
+  if (!plot) return null;
+
+  const claim = genesisDistrict.claims.find((entry) => entry.plotId === plot.id);
+  const agent = claim ? genesisDistrict.agents.find((entry) => entry.id === claim.agentId) : null;
+  const claimable = plotIsClaimable(genesisDistrict, plot);
+  const structures = constructionNamesForPlot(plot.id);
+  return {
+    title: claim ? "Claimed Plot" : claimable ? "Claimable Plot" : "Reserved Land",
+    plot,
+    rows: [
+      ["id", plot.id],
+      ["land", claimable ? "claimable civilization cell" : "reserved public footprint"],
+      ["structure", structures ?? "none"],
+      ["group", String(plot.group)],
+      ["width x depth", `${plot.width} x ${plot.depth}`],
+      ["area", String(plot.area)],
+      ["claimed", claim ? "claimed" : "unclaimed"],
+      ["owner", agent?.name ?? "none"],
+      ["canBuild", canBuild && claimable ? "yes" : "no"]
+    ]
+  };
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x93cdea);
@@ -117,6 +147,7 @@ let sky: GoodVibesSky | null = null;
 let editor: BlockEditor | null = null;
 let editableRenderer: EditableBlockRenderer | null = null;
 let structureRenderer: StructureRenderer | null = null;
+let genesisRenderer: GenesisRenderer | null = null;
 let plotInspector: PlotInspector | null = null;
 let disposeBlueprintDevTools: (() => void) | null = null;
 let blockPalette: { update: () => void; dispose: () => void } | null = null;
@@ -128,6 +159,7 @@ const dispose = () => {
   controller?.dispose();
   editor?.dispose();
   plotInspector?.dispose();
+  genesisRenderer?.dispose();
   structureRenderer?.dispose();
   editableRenderer?.dispose();
   disposeBlueprintDevTools?.();
@@ -153,8 +185,11 @@ const start = () => {
 
   editableRenderer = new EditableBlockRenderer(world, materials);
   scene.add(editableRenderer.group);
+  genesisRenderer = new GenesisRenderer(world, genesisDistrict);
+  genesisRenderer.rebuild();
+  scene.add(genesisRenderer.group);
   structureRenderer = new StructureRenderer(world, STRUCTURE_DEFINITIONS_BY_ID);
-  structureRenderer.setInstances(startingStructures);
+  structureRenderer.setInstances([]);
   scene.add(structureRenderer.group);
   plotInspector = new PlotInspector({
     camera,
@@ -162,26 +197,21 @@ const start = () => {
     terrainGroup: terrain,
     world,
     viewerAgentId: VIEWER_AGENT_ID,
-    structureNameForPlot: (plotId) => {
-      const instances = structuresByPlotId.get(plotId) ?? [];
-      const names = instances.flatMap((instance) => {
-        const definitionName = STRUCTURE_DEFINITIONS_BY_ID[instance.definitionId]?.name;
-        return definitionName ? [definitionName] : [];
-      });
-      return names.length > 0 ? names.join(", ") : null;
-    }
+    structureNameForPlot: constructionNamesForPlot,
+    inspectableGroups: [genesisRenderer.group],
+    describeColumn: describeGenesisColumn
   });
   scene.add(plotInspector.group);
 
   camera.position.set(
-    worldBlockX(starterTownCenter.x - 18),
+    worldBlockX(genesisDistrict.center.x - 24),
     world.worldHeight() + playerEyeHeight,
-    worldBlockZ(starterTownCenter.z + 24)
+    worldBlockZ(genesisDistrict.center.z + 32)
   );
   const target = new THREE.Vector3(
-    worldBlockX(starterTownCenter.x),
+    worldBlockX(genesisDistrict.center.x),
     world.worldHeight() + 0.8,
-    worldBlockZ(starterTownCenter.z)
+    worldBlockZ(genesisDistrict.center.z)
   );
   controller = new PlayerCameraController(camera, renderer.domElement, world.worldHeight(), playerEyeHeight);
   controller.lookAt(target);
@@ -195,7 +225,7 @@ const start = () => {
     terrainGroup: terrain,
     setHiddenTopColumns,
     inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false,
-    canEditColumn: (x, z) => world.canBuild(VIEWER_AGENT_ID, x, z)
+    canEditColumn: (x, z) => world.canBuild(VIEWER_AGENT_ID, x, z) && !publicSiteAt(genesisDistrict, x, z)
   });
   scene.add(editor.group);
   disposeBlueprintDevTools = installBlueprintDevTools({ editableWorld });
