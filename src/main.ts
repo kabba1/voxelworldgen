@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import "./styles.css";
+import { installBlueprintDevTools } from "./dev/blueprintDevTools";
 import { StatsOverlay } from "./diagnostics/StatsOverlay";
 import { BlockEditor } from "./input/BlockEditor";
 import { PlayerCameraController } from "./input/PlayerCameraController";
@@ -80,6 +81,7 @@ let sky: GoodVibesSky | null = null;
 let editor: BlockEditor | null = null;
 let editableRenderer: EditableBlockRenderer | null = null;
 let plotInspector: PlotInspector | null = null;
+let disposeBlueprintDevTools: (() => void) | null = null;
 let lastTime = performance.now();
 
 const dispose = () => {
@@ -87,6 +89,7 @@ const dispose = () => {
   editor?.dispose();
   plotInspector?.dispose();
   editableRenderer?.dispose();
+  disposeBlueprintDevTools?.();
   stats?.dispose();
   sky?.dispose();
   window.removeEventListener("resize", onResize);
@@ -133,6 +136,7 @@ const start = () => {
     inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false,
     canEditColumn: (x, z) => world.canBuild(VIEWER_AGENT_ID, x, z)
   });
+  disposeBlueprintDevTools = installBlueprintDevTools({ editableWorld });
 
   stats = new StatsOverlay(
     renderer,

@@ -260,6 +260,7 @@ export const ACTIVE_SOLID_BLOCKS = (Object.values(BLOCK_DEFINITIONS) as readonly
   (definition): definition is SolidBlockDefinition => definition.solid
 );
 
-export const isSolidBlockId = (blockId: BlockId): blockId is SolidBlockId => BLOCK_DEFINITIONS[blockId].solid;
+export const isSolidBlockId = (blockId: number): blockId is SolidBlockId =>
+  Boolean((BLOCK_DEFINITIONS as Partial<Record<number, BlockDefinition>>)[blockId]?.solid);
 
 export const colorForBlock = (blockId: SolidBlockId) => BLOCK_DEFINITIONS[blockId].color;
