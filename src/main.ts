@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import "./styles.css";
+import { ConcreteBoxTool } from "./dev/concreteBoxTool";
 import { PlayerCameraController } from "./input/PlayerCameraController";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
@@ -57,6 +58,14 @@ const surfaceBlocks = buildSurfaceBlockMap(world);
 const { group: terrain } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
 scene.add(terrain);
 
+const concreteBoxTool = new ConcreteBoxTool({
+  camera,
+  domElement: renderer.domElement,
+  world,
+  materials
+});
+scene.add(concreteBoxTool.group);
+
 camera.position.set(
   worldBlockX(world.width / 2 - 30),
   world.worldHeight() + playerEyeHeight,
@@ -88,6 +97,7 @@ const dispose = () => {
   if (disposed) return;
   disposed = true;
   controller.dispose();
+  concreteBoxTool.dispose();
   window.removeEventListener("resize", onResize);
   renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
   renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
@@ -104,5 +114,6 @@ renderer.setAnimationLoop((time) => {
   lastTime = time;
 
   controller.update(deltaSeconds);
+  concreteBoxTool.update();
   renderer.render(scene, camera);
 });
