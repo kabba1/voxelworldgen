@@ -22,9 +22,7 @@ const makeMaterial = (definition: SolidBlockDefinition) => {
 
   return new THREE.MeshLambertMaterial({
     map: loadCrispTexture(definition.texturePath),
-    transparent: definition.transparent ?? false,
-    alphaTest: definition.transparent ? 0.2 : 0,
-    side: definition.transparent ? THREE.DoubleSide : THREE.FrontSide
+    side: THREE.FrontSide
   });
 };
 
