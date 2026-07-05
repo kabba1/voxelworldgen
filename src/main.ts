@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import "./styles.css";
 import { PlayerCameraController } from "./input/PlayerCameraController";
-import { CharacterWalker } from "./render/characterWalker";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { FlatWorld } from "./world/flatWorld";
@@ -58,19 +57,6 @@ const surfaceBlocks = buildSurfaceBlockMap(world);
 const { group: terrain } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
 scene.add(terrain);
 
-const walker = new CharacterWalker(world, {
-  assetPath: "/assets/characters/Casual_Male.gltf",
-  centerX: world.width / 2,
-  centerZ: world.depth / 2,
-  radiusBlocks: 22,
-  speedBlocksPerSecond: 3.6,
-  targetHeightBlocks: 2.35
-});
-scene.add(walker.group);
-void walker.load().catch((error) => {
-  console.error("Failed to load walking character.", error);
-});
-
 camera.position.set(
   worldBlockX(world.width / 2 - 30),
   world.worldHeight() + playerEyeHeight,
@@ -102,7 +88,6 @@ const dispose = () => {
   if (disposed) return;
   disposed = true;
   controller.dispose();
-  walker.dispose();
   window.removeEventListener("resize", onResize);
   renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
   renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
@@ -119,6 +104,5 @@ renderer.setAnimationLoop((time) => {
   lastTime = time;
 
   controller.update(deltaSeconds);
-  walker.update(deltaSeconds);
   renderer.render(scene, camera);
 });
