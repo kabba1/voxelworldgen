@@ -18,6 +18,7 @@ import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 
+const VIEWER_AGENT_ID = "local-player";
 const seedWorld = new FlatWorld();
 const plotLayout = generatePlotLayout(seedWorld);
 const world = new PlotWorld(plotLayout, {
@@ -107,7 +108,13 @@ const start = () => {
 
   editableRenderer = new EditableBlockRenderer(world, materials);
   scene.add(editableRenderer.group);
-  plotInspector = new PlotInspector({ camera, domElement: renderer.domElement, terrainGroup: terrain, world });
+  plotInspector = new PlotInspector({
+    camera,
+    domElement: renderer.domElement,
+    terrainGroup: terrain,
+    world,
+    viewerAgentId: VIEWER_AGENT_ID
+  });
   scene.add(plotInspector.group);
 
   camera.position.set(-34, world.worldHeight() + 1.7, 54);
@@ -123,7 +130,8 @@ const start = () => {
     editableRenderer,
     terrainGroup: terrain,
     setHiddenTopColumns,
-    inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false
+    inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false,
+    canEditColumn: (x, z) => world.canBuild(VIEWER_AGENT_ID, x, z)
   });
 
   stats = new StatsOverlay(

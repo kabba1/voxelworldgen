@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, type SolidBlockId } from "../world/blocks";
+import { ACTIVE_SOLID_BLOCKS, type SolidBlockDefinition, type SolidBlockId } from "../world/blocks";
 
 export type TerrainMaterials = Record<SolidBlockId, THREE.MeshLambertMaterial>;
 
@@ -15,17 +15,27 @@ const loadCrispTexture = (path: string) => {
   return texture;
 };
 
-const makeMaterial = (texturePath: string) => {
+const makeMaterial = (definition: SolidBlockDefinition) => {
+  if (!definition.texturePath) {
+    throw new Error(`Missing texture path for active solid block: ${definition.name}`);
+  }
+
   return new THREE.MeshLambertMaterial({
-    map: loadCrispTexture(texturePath)
+    map: loadCrispTexture(definition.texturePath),
+    transparent: definition.transparent ?? false,
+    alphaTest: definition.transparent ? 0.2 : 0
   });
 };
 
 export const loadTerrainMaterials = (): TerrainMaterials => {
-  return {
-    [BLOCKS.grass]: makeMaterial("/textures/grass.png"),
-    [BLOCKS.dirt]: makeMaterial("/textures/dirt.png"),
-    [BLOCKS.stone]: makeMaterial("/textures/stone.png"),
-    [BLOCKS.path]: makeMaterial("/textures/path.png")
-  };
+  const entries = ACTIVE_SOLID_BLOCKS.map((definition) => [definition.id, makeMaterial(definition)] as const);
+  const materials = Object.fromEntries(entries) as TerrainMaterials;
+
+  for (const definition of ACTIVE_SOLID_BLOCKS) {
+    if (!materials[definition.id]) {
+      throw new Error(`Missing material for active solid block: ${definition.name}`);
+    }
+  }
+
+  return materials;
 };

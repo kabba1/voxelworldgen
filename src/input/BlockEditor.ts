@@ -13,6 +13,7 @@ type BlockEditorOptions = {
   terrainGroup: THREE.Group;
   setHiddenTopColumns: (hiddenColumns: ReadonlySet<string>) => void;
   inspectTerrainColumn?: (x: number, z: number) => boolean;
+  canEditColumn?: (x: number, z: number) => boolean;
 };
 
 export type BlockEditorState = {
@@ -127,6 +128,11 @@ export class BlockEditor {
   }
 
   private breakBlock(target: Target) {
+    if (!this.canEditColumn(target.block.x, target.block.z)) {
+      this.state.lastAction = "Cannot edit this column";
+      return;
+    }
+
     if (this.options.editableWorld.breakBlock(target.block.x, target.block.y, target.block.z)) {
       this.state.lastAction = `Broke ${blockName(target.blockId)}`;
       this.refresh();
@@ -145,6 +151,11 @@ export class BlockEditor {
       z: target.block.z + target.normal.z
     };
 
+    if (!this.canEditColumn(placeAt.x, placeAt.z)) {
+      this.state.lastAction = "Cannot build here";
+      return;
+    }
+
     if (this.options.editableWorld.placeBlock(placeAt.x, placeAt.y, placeAt.z, this.state.heldBlock)) {
       this.state.lastAction = `Placed ${this.state.heldBlockName}`;
       this.refresh();
@@ -152,6 +163,10 @@ export class BlockEditor {
     }
 
     this.state.lastAction = "Blocked";
+  }
+
+  private canEditColumn(x: number, z: number) {
+    return this.options.canEditColumn?.(x, z) ?? false;
   }
 
   private refresh() {

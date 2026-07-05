@@ -1,4 +1,4 @@
-import { BLOCKS, type BlockId, type SolidBlockId } from "./blocks";
+import { BLOCKS, isSolidBlockId, type BlockId, type SolidBlockId } from "./blocks";
 import type { FlatWorld } from "./flatWorld";
 
 export type BlockPosition = {
@@ -35,12 +35,12 @@ export class EditableWorld {
   }
 
   isSolid(x: number, y: number, z: number) {
-    return this.blockAt(x, y, z) !== BLOCKS.air;
+    return isSolidBlockId(this.blockAt(x, y, z));
   }
 
   solidBlockAt(x: number, y: number, z: number): SolidBlockId | null {
     const block = this.blockAt(x, y, z);
-    return block === BLOCKS.air ? null : block;
+    return isSolidBlockId(block) ? block : null;
   }
 
   hasOverride(x: number, y: number, z: number) {
