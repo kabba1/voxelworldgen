@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import "./styles.css";
-import { ConcreteBoxTool } from "./dev/concreteBoxTool";
 import { PlayerCameraController } from "./input/PlayerCameraController";
+import { ConcreteBoxRenderer } from "./render/concreteBoxRenderer";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
+import { createCenteredBoxTown } from "./world/boxTown";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
@@ -57,14 +58,14 @@ const materials = loadTerrainMaterials();
 const surfaceBlocks = buildSurfaceBlockMap(world);
 const { group: terrain } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
 scene.add(terrain);
+const townBoxes = createCenteredBoxTown(world);
 
-const concreteBoxTool = new ConcreteBoxTool({
-  camera,
-  domElement: renderer.domElement,
+const concreteBoxes = new ConcreteBoxRenderer({
   world,
-  materials
+  materials,
+  boxes: townBoxes
 });
-scene.add(concreteBoxTool.group);
+scene.add(concreteBoxes.group);
 
 camera.position.set(
   worldBlockX(world.width / 2 - 30),
@@ -97,7 +98,7 @@ const dispose = () => {
   if (disposed) return;
   disposed = true;
   controller.dispose();
-  concreteBoxTool.dispose();
+  concreteBoxes.dispose();
   window.removeEventListener("resize", onResize);
   renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
   renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
@@ -114,6 +115,5 @@ renderer.setAnimationLoop((time) => {
   lastTime = time;
 
   controller.update(deltaSeconds);
-  concreteBoxTool.update();
   renderer.render(scene, camera);
 });
