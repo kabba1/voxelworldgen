@@ -74,6 +74,7 @@ canvas {
   border-top: 1px solid rgb(255 255 255 / 14%);
 }
 
-.sim-debug__agent {
+.sim-debug__agent,
+.sim-debug__project {
   overflow-wrap: anywhere;
 }

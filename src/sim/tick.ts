@@ -1,4 +1,6 @@
 import type { Agent, AgentNeedId, CityState } from "./types";
+import { updateConstruction } from "./systems/construction";
+import { updateProjects } from "./systems/projects";
 
 export const TICKS_PER_DAY = 24;
 
@@ -25,10 +27,12 @@ const decayAgentNeeds = (agent: Agent): Agent => ({
 
 export const tickCityState = (state: CityState): CityState => {
   const nextTick = state.tick + 1;
-  return {
+  const decayedState: CityState = {
     ...state,
     tick: nextTick,
     day: Math.floor(nextTick / TICKS_PER_DAY) + 1,
     agents: state.agents.map(decayAgentNeeds)
   };
+
+  return updateConstruction(updateProjects(decayedState));
 };

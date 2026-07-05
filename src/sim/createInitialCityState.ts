@@ -69,8 +69,9 @@ const createCharterHall = (plotId: string): CityBuilding => ({
 });
 
 export const createInitialCityState = (options: CreateInitialCityStateOptions = {}): CityState => {
-  const availablePlotIds = [...(options.availablePlotIds ?? [])];
-  const charterPlotId = options.charterPlotId ?? availablePlotIds[0] ?? "plot-unassigned";
+  const requestedAvailablePlotIds = [...(options.availablePlotIds ?? [])];
+  const charterPlotId = options.charterPlotId ?? requestedAvailablePlotIds[0] ?? "plot-unassigned";
+  const availablePlotIds = requestedAvailablePlotIds.filter((plotId) => plotId !== charterPlotId);
   const charterHall = createCharterHall(charterPlotId);
 
   return {

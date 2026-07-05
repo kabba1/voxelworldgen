@@ -28,6 +28,13 @@ const agentLine = (name: string, needs: Record<AgentNeedId, number>) => {
   return row;
 };
 
+const projectLine = (blueprintId: string, status: string, progressLabor: number, requiredLabor: number) => {
+  const row = document.createElement("div");
+  row.className = "sim-debug__project";
+  row.textContent = `${blueprintId}: ${status} ${rounded(progressLabor)}/${rounded(requiredLabor)}`;
+  return row;
+};
+
 export class SimulationDebugOverlay {
   private readonly root = document.createElement("aside");
 
@@ -55,6 +62,19 @@ export class SimulationDebugOverlay {
     agents.className = "sim-debug__section";
     for (const agent of state.agents) agents.append(agentLine(agent.name, agent.needs));
 
+    const projects = document.createElement("div");
+    projects.className = "sim-debug__section";
+    const visibleProjects = state.projects.slice(0, 4);
+    if (visibleProjects.length === 0) {
+      projects.append(projectLine("none", "idle", 0, 0));
+    } else {
+      for (const project of visibleProjects) {
+        projects.append(
+          projectLine(project.blueprintId ?? project.type, project.status, project.progressLabor, project.requiredLabor)
+        );
+      }
+    }
+
     this.root.replaceChildren(
       title,
       line("tick", rounded(state.tick)),
@@ -63,6 +83,7 @@ export class SimulationDebugOverlay {
       line("buildings", rounded(state.buildings.length)),
       line("projects", rounded(state.projects.length)),
       stockpile,
+      projects,
       agents
     );
   }
