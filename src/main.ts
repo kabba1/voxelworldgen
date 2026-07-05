@@ -4,6 +4,7 @@ import { PlayerCameraController } from "./input/PlayerCameraController";
 import { ConcreteBoxRenderer } from "./render/concreteBoxRenderer";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
+import { createInitialCityState } from "./sim/createInitialCityState";
 import { createCenteredBoxTown } from "./world/boxTown";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
@@ -23,6 +24,16 @@ const world = new PlotWorld(plotLayout, {
   stoneDepth: seedWorld.stoneDepth,
   dirtDepth: seedWorld.dirtDepth,
   grassDepth: seedWorld.grassDepth
+});
+const initialCityState = createInitialCityState({
+  availablePlotIds: plotLayout.plots.map((plot) => plot.id),
+  charterPlotId: plotLayout.plots[0]?.id ?? null
+});
+console.info("Initial city simulation scaffold", {
+  agents: initialCityState.agents.length,
+  buildings: initialCityState.buildings.length,
+  blueprints: initialCityState.knownBlueprintIds.length,
+  stockpileFood: initialCityState.publicStockpile.food
 });
 
 const playerEyeHeight = world.blockSize * PLAYER_EYE_HEIGHT_BLOCKS;
