@@ -6,6 +6,7 @@ import { BlockEditor } from "./input/BlockEditor";
 import { PlayerCameraController } from "./input/PlayerCameraController";
 import { PlotInspector } from "./input/PlotInspector";
 import { EditableBlockRenderer } from "./render/editableBlocks";
+import { StructureRenderer } from "./render/structureRenderer";
 import { GoodVibesSky } from "./render/skybox";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
@@ -14,12 +15,18 @@ import { EditableWorld } from "./world/editableWorld";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
+import {
+  createStartingStructureInstances,
+  rotatedFootprint,
+  STRUCTURE_DEFINITIONS_BY_ID
+} from "./world/structures";
 import { buildSurfaceBlockMap } from "./world/surfaceBlocks";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 
 const VIEWER_AGENT_ID = "local-player";
+const PLAYER_EYE_HEIGHT_BLOCKS = 1.62;
 const IS_DEV = ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV ?? false);
 const seedWorld = new FlatWorld();
 const plotLayout = generatePlotLayout(seedWorld);
@@ -31,6 +38,34 @@ const world = new PlotWorld(plotLayout, {
   dirtDepth: seedWorld.dirtDepth,
   grassDepth: seedWorld.grassDepth
 });
+const startingStructures = createStartingStructureInstances(world);
+const structuresByPlotId = new Map<string, typeof startingStructures>();
+for (const instance of startingStructures) {
+  const plotStructures = structuresByPlotId.get(instance.plotId) ?? [];
+  plotStructures.push(instance);
+  structuresByPlotId.set(instance.plotId, plotStructures);
+}
+const starterTownCenter = (() => {
+  let totalX = 0;
+  let totalZ = 0;
+  let count = 0;
+
+  for (const instance of startingStructures) {
+    const definition = STRUCTURE_DEFINITIONS_BY_ID[instance.definitionId];
+    if (!definition) continue;
+    const footprint = rotatedFootprint(definition, instance.rotation);
+    totalX += instance.x + footprint.width / 2;
+    totalZ += instance.z + footprint.depth / 2;
+    count += 1;
+  }
+
+  return count > 0
+    ? { x: totalX / count, z: totalZ / count }
+    : { x: world.width / 2, z: world.depth / 2 };
+})();
+const playerEyeHeight = world.blockSize * PLAYER_EYE_HEIGHT_BLOCKS;
+const worldBlockX = (x: number) => (x - world.width / 2) * world.blockSize;
+const worldBlockZ = (z: number) => (z - world.depth / 2) * world.blockSize;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x93cdea);
@@ -81,6 +116,7 @@ let stats: StatsOverlay | null = null;
 let sky: GoodVibesSky | null = null;
 let editor: BlockEditor | null = null;
 let editableRenderer: EditableBlockRenderer | null = null;
+let structureRenderer: StructureRenderer | null = null;
 let plotInspector: PlotInspector | null = null;
 let disposeBlueprintDevTools: (() => void) | null = null;
 let blockPalette: { update: () => void; dispose: () => void } | null = null;
@@ -92,6 +128,7 @@ const dispose = () => {
   controller?.dispose();
   editor?.dispose();
   plotInspector?.dispose();
+  structureRenderer?.dispose();
   editableRenderer?.dispose();
   disposeBlueprintDevTools?.();
   blockPalette?.dispose();
@@ -116,18 +153,37 @@ const start = () => {
 
   editableRenderer = new EditableBlockRenderer(world, materials);
   scene.add(editableRenderer.group);
+  structureRenderer = new StructureRenderer(world, STRUCTURE_DEFINITIONS_BY_ID);
+  structureRenderer.setInstances(startingStructures);
+  scene.add(structureRenderer.group);
   plotInspector = new PlotInspector({
     camera,
     domElement: renderer.domElement,
     terrainGroup: terrain,
     world,
-    viewerAgentId: VIEWER_AGENT_ID
+    viewerAgentId: VIEWER_AGENT_ID,
+    structureNameForPlot: (plotId) => {
+      const instances = structuresByPlotId.get(plotId) ?? [];
+      const names = instances.flatMap((instance) => {
+        const definitionName = STRUCTURE_DEFINITIONS_BY_ID[instance.definitionId]?.name;
+        return definitionName ? [definitionName] : [];
+      });
+      return names.length > 0 ? names.join(", ") : null;
+    }
   });
   scene.add(plotInspector.group);
 
-  camera.position.set(-34, world.worldHeight() + 1.7, 54);
-  const target = new THREE.Vector3(camera.position.x + 5, world.worldHeight(), camera.position.z - 5);
-  controller = new PlayerCameraController(camera, renderer.domElement, world.worldHeight());
+  camera.position.set(
+    worldBlockX(starterTownCenter.x - 18),
+    world.worldHeight() + playerEyeHeight,
+    worldBlockZ(starterTownCenter.z + 24)
+  );
+  const target = new THREE.Vector3(
+    worldBlockX(starterTownCenter.x),
+    world.worldHeight() + 0.8,
+    worldBlockZ(starterTownCenter.z)
+  );
+  controller = new PlayerCameraController(camera, renderer.domElement, world.worldHeight(), playerEyeHeight);
   controller.lookAt(target);
 
   editor = new BlockEditor({

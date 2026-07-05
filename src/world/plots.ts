@@ -605,7 +605,10 @@ export const generatePlotLayout = (
 
     Object.assign(counts, nextCounts);
     districts.push(district);
-    plots.push(...districtPlots);
+    for (const plot of districtPlots) {
+      plot.id = `plot-${plots.length + 1}`;
+      plots.push(plot);
+    }
     pathRects.push(...districtPaths);
     addDistrictPerimeterPath(district, pathRects, config, world);
   }

@@ -8,6 +8,7 @@ type PlotInspectorOptions = {
   terrainGroup: THREE.Group;
   world: PlotWorld;
   viewerAgentId?: string;
+  structureNameForPlot?: (plotId: string) => string | null;
 };
 
 const INSPECTION_REACH = 1800;
@@ -166,8 +167,10 @@ export class PlotInspector {
     }
 
     const ownerAgentId = plot.ownerAgentId ?? null;
+    const structureName = this.options.structureNameForPlot?.(plot.id) ?? null;
     const rows: Array<[string, string]> = [
       ["id", plot.id],
+      ["structure", structureName ?? "none"],
       ["group", String(plot.group)],
       ["width x depth", `${plot.width} x ${plot.depth}`],
       ["area", String(plot.area)],
