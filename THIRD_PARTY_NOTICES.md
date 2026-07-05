@@ -50,3 +50,19 @@ Source:
 - `public/textures/cobweb.png` is a small project-generated transparent web texture.
 - `public/textures/glass_pane.png` is a small project-generated transparent pane texture.
 - `public/textures/iron_bars.png` is a small project-generated metal bar texture.
+
+## Ultimate Animated Character Pack
+
+This project includes browser-runtime glTF character models from:
+
+- `public/assets/agents/ultimate-animated-character-pack/gltf/*.gltf`
+
+The source pack is `Ultimate Animated Character Pack - Nov 2019` by Quaternius.
+The included license file is copied to:
+
+- `public/assets/agents/ultimate-animated-character-pack/License.txt`
+
+License:
+
+- CC0 1.0 Universal / Public Domain Dedication
+- https://creativecommons.org/publicdomain/zero/1.0/
