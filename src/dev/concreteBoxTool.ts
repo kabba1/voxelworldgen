@@ -78,6 +78,7 @@ export class ConcreteBoxTool {
   private readonly colorName = document.createElement("strong");
   private readonly placedCount = document.createElement("span");
   private readonly lockState = document.createElement("span");
+  private readonly dimensionSummary = document.createElement("span");
   private readonly inputs: Record<keyof BoxDimensions, HTMLInputElement>;
 
   private selectedIndex = 0;
@@ -143,12 +144,22 @@ export class ConcreteBoxTool {
     selected.append(this.swatch, this.colorName);
 
     const dimensions = document.createElement("div");
-    dimensions.className = "concrete-box-tool__dimensions";
-    dimensions.append(
-      this.createField("L", this.inputs.length),
-      this.createField("W", this.inputs.width),
-      this.createField("H", this.inputs.height)
+    dimensions.className = "concrete-box-tool__size";
+    const dimensionsHeader = document.createElement("div");
+    dimensionsHeader.className = "concrete-box-tool__size-header";
+    const dimensionsTitle = document.createElement("span");
+    dimensionsTitle.textContent = "Box Size";
+    this.dimensionSummary.className = "concrete-box-tool__dimension-summary";
+    dimensionsHeader.append(dimensionsTitle, this.dimensionSummary);
+
+    const dimensionFields = document.createElement("div");
+    dimensionFields.className = "concrete-box-tool__dimensions";
+    dimensionFields.append(
+      this.createField("Length", this.inputs.length),
+      this.createField("Width", this.inputs.width),
+      this.createField("Height", this.inputs.height)
     );
+    dimensions.append(dimensionsHeader, dimensionFields);
 
     this.lockState.className = "concrete-box-tool__hint";
     this.panel.append(header, selected, dimensions, this.lockState);
@@ -206,6 +217,7 @@ export class ConcreteBoxTool {
     this.swatch.style.backgroundImage = `url(${selected.texturePath})`;
     this.colorName.textContent = selected.key;
     this.placedCount.textContent = `${this.placedBoxes.length} placed`;
+    this.dimensionSummary.textContent = `${this.dimensions.length} x ${this.dimensions.width} x ${this.dimensions.height}`;
 
     const locked = document.pointerLockElement === this.options.domElement;
     for (const input of Object.values(this.inputs)) input.disabled = locked;
