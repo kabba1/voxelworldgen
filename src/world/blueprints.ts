@@ -1,4 +1,4 @@
-import { BLOCKS, isSolidBlockId, type SolidBlockId } from "./blocks";
+import { BLOCKS, blockIdToKey, blockKeyToId, isSolidBlockId, type SolidBlockId, type SolidBlockKey } from "./blocks";
 import type { EditableWorld } from "./editableWorld";
 import type { Plot } from "./plots";
 import type { PlotWorld } from "./plotWorld";
@@ -21,6 +21,14 @@ export type StructureBlueprint = {
   blocks: StructureBlueprintBlock[];
   entrance?: { x: number; z: number };
   tags?: string[];
+};
+
+export type StructureBlueprintJsonBlock = Omit<StructureBlueprintBlock, "block"> & {
+  block: SolidBlockKey;
+};
+
+export type StructureBlueprintJson = Omit<StructureBlueprint, "blocks"> & {
+  blocks: StructureBlueprintJsonBlock[];
 };
 
 export type StructureBlueprintOrigin = {
@@ -198,7 +206,35 @@ export const createBlueprintFromOverrides = (
   };
 };
 
-export const stringifyBlueprint = (blueprint: StructureBlueprint) => `${JSON.stringify(blueprint, null, 2)}\n`;
+const solidBlockKeyToId = (blockKey: string, blueprintId: string, blockIndex: number): SolidBlockId => {
+  const blockId = blockKeyToId(blockKey);
+  if (!isSolidBlockId(blockId)) {
+    throw new Error(`Blueprint ${blueprintId} block ${blockIndex} uses inactive or non-solid block key "${blockKey}".`);
+  }
+
+  return blockId;
+};
+
+export const blueprintToJson = (blueprint: StructureBlueprint): StructureBlueprintJson => ({
+  ...blueprint,
+  blocks: blueprint.blocks.map((block) => ({
+    ...block,
+    block: blockIdToKey(block.block) as SolidBlockKey
+  }))
+});
+
+export const blueprintFromJson = (blueprint: StructureBlueprintJson): StructureBlueprint => ({
+  ...blueprint,
+  blocks: blueprint.blocks.map((block, index) => ({
+    ...block,
+    block: solidBlockKeyToId(block.block, blueprint.id, index)
+  }))
+});
+
+export const parseBlueprint = (blueprintJson: string): StructureBlueprint =>
+  blueprintFromJson(JSON.parse(blueprintJson) as StructureBlueprintJson);
+
+export const stringifyBlueprint = (blueprint: StructureBlueprint) => `${JSON.stringify(blueprintToJson(blueprint), null, 2)}\n`;
 
 const makeDevTestShack = (): StructureBlueprint => {
   const blocks: StructureBlueprintBlock[] = [];

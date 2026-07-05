@@ -26,9 +26,40 @@ export const BLOCKS = {
   deadBush: 24
 } as const;
 
-export type BlockKey = keyof typeof BLOCKS;
-export type BlockId = (typeof BLOCKS)[BlockKey];
+type BlockConstantKey = keyof typeof BLOCKS;
+export type BlockId = (typeof BLOCKS)[BlockConstantKey];
 export type SolidBlockId = Exclude<BlockId, typeof BLOCKS.air>;
+
+export const BLOCK_KEYS = {
+  [BLOCKS.air]: "air",
+  [BLOCKS.stone]: "stone",
+  [BLOCKS.dirt]: "dirt",
+  [BLOCKS.grass]: "grass",
+  [BLOCKS.path]: "path",
+  [BLOCKS.cobblestone]: "cobblestone",
+  [BLOCKS.mossyCobblestone]: "mossy_cobblestone",
+  [BLOCKS.stoneBricks]: "stone_bricks",
+  [BLOCKS.crackedStoneBricks]: "cracked_stone_bricks",
+  [BLOCKS.bricks]: "bricks",
+  [BLOCKS.oakLog]: "oak_log",
+  [BLOCKS.oakPlanks]: "oak_planks",
+  [BLOCKS.oakDoor]: "oak_door",
+  [BLOCKS.glass]: "glass",
+  [BLOCKS.glassPane]: "glass_pane",
+  [BLOCKS.ironBars]: "iron_bars",
+  [BLOCKS.torch]: "torch",
+  [BLOCKS.bed]: "bed",
+  [BLOCKS.craftingTable]: "crafting_table",
+  [BLOCKS.furnace]: "furnace",
+  [BLOCKS.bookshelf]: "bookshelf",
+  [BLOCKS.cobweb]: "cobweb",
+  [BLOCKS.gravel]: "gravel",
+  [BLOCKS.coarseDirt]: "coarse_dirt",
+  [BLOCKS.deadBush]: "dead_bush"
+} as const satisfies Record<BlockId, string>;
+
+export type BlockKey = (typeof BLOCK_KEYS)[BlockId];
+export type SolidBlockKey = Exclude<BlockKey, "air">;
 
 export type BlockDefinition = {
   id: BlockId;
@@ -42,6 +73,7 @@ export type BlockDefinition = {
 
 export type SolidBlockDefinition = BlockDefinition & {
   id: SolidBlockId;
+  key: SolidBlockKey;
   solid: true;
   texturePath: string;
 };
@@ -97,7 +129,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.mossyCobblestone]: {
     id: BLOCKS.mossyCobblestone,
-    key: "mossyCobblestone",
+    key: "mossy_cobblestone",
     name: "Mossy Cobblestone",
     color: 0x617157,
     solid: true,
@@ -105,7 +137,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.stoneBricks]: {
     id: BLOCKS.stoneBricks,
-    key: "stoneBricks",
+    key: "stone_bricks",
     name: "Stone Bricks",
     color: 0x74777b,
     solid: true,
@@ -113,7 +145,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.crackedStoneBricks]: {
     id: BLOCKS.crackedStoneBricks,
-    key: "crackedStoneBricks",
+    key: "cracked_stone_bricks",
     name: "Cracked Stone Bricks",
     color: 0x666a70,
     solid: true,
@@ -129,7 +161,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.oakLog]: {
     id: BLOCKS.oakLog,
-    key: "oakLog",
+    key: "oak_log",
     name: "Oak Log",
     color: 0x8d673c,
     solid: true,
@@ -137,7 +169,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.oakPlanks]: {
     id: BLOCKS.oakPlanks,
-    key: "oakPlanks",
+    key: "oak_planks",
     name: "Oak Planks",
     color: 0xb98a4d,
     solid: true,
@@ -145,7 +177,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.oakDoor]: {
     id: BLOCKS.oakDoor,
-    key: "oakDoor",
+    key: "oak_door",
     name: "Oak Door",
     color: 0xa97b42,
     solid: true,
@@ -163,7 +195,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.glassPane]: {
     id: BLOCKS.glassPane,
-    key: "glassPane",
+    key: "glass_pane",
     name: "Glass Pane",
     color: 0xc4e7ec,
     solid: true,
@@ -172,7 +204,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.ironBars]: {
     id: BLOCKS.ironBars,
-    key: "ironBars",
+    key: "iron_bars",
     name: "Iron Bars",
     color: 0xa7adb2,
     solid: true,
@@ -198,7 +230,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.craftingTable]: {
     id: BLOCKS.craftingTable,
-    key: "craftingTable",
+    key: "crafting_table",
     name: "Crafting Table",
     color: 0x8b5c32,
     solid: true,
@@ -239,7 +271,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.coarseDirt]: {
     id: BLOCKS.coarseDirt,
-    key: "coarseDirt",
+    key: "coarse_dirt",
     name: "Coarse Dirt",
     color: 0x7d5737,
     solid: true,
@@ -247,7 +279,7 @@ export const BLOCK_DEFINITIONS = {
   },
   [BLOCKS.deadBush]: {
     id: BLOCKS.deadBush,
-    key: "deadBush",
+    key: "dead_bush",
     name: "Dead Bush",
     color: 0x8d6d45,
     solid: true,
@@ -256,9 +288,32 @@ export const BLOCK_DEFINITIONS = {
   }
 } as const satisfies Record<BlockId, BlockDefinition>;
 
+const BLOCK_ID_BY_KEY = Object.fromEntries(
+  Object.entries(BLOCK_KEYS).map(([blockId, blockKey]) => [blockKey, Number(blockId) as BlockId])
+) as Record<BlockKey, BlockId>;
+
 export const ACTIVE_SOLID_BLOCKS = (Object.values(BLOCK_DEFINITIONS) as readonly BlockDefinition[]).filter(
   (definition): definition is SolidBlockDefinition => definition.solid
 );
+
+export const validateBlockKey = (blockKey: string): BlockKey => {
+  if (!Object.prototype.hasOwnProperty.call(BLOCK_ID_BY_KEY, blockKey)) {
+    throw new Error(`Unknown block key "${blockKey}".`);
+  }
+
+  return blockKey as BlockKey;
+};
+
+export const blockKeyToId = (blockKey: string): BlockId => BLOCK_ID_BY_KEY[validateBlockKey(blockKey)];
+
+export const blockIdToKey = (blockId: number): BlockKey => {
+  const blockKey = (BLOCK_KEYS as Partial<Record<number, BlockKey>>)[blockId];
+  if (!blockKey) {
+    throw new Error(`Unknown block id ${blockId}.`);
+  }
+
+  return blockKey;
+};
 
 export const isSolidBlockId = (blockId: number): blockId is SolidBlockId =>
   Boolean((BLOCK_DEFINITIONS as Partial<Record<number, BlockDefinition>>)[blockId]?.solid);
