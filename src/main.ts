@@ -2,12 +2,12 @@ import * as THREE from "three";
 import "./styles.css";
 import { SimulationDebugOverlay } from "./debug/simulationDebugOverlay";
 import { PlayerCameraController } from "./input/PlayerCameraController";
+import { cityBuildingsToConcreteBoxes } from "./render/cityBuildingBoxes";
 import { ConcreteBoxRenderer } from "./render/concreteBoxRenderer";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { createInitialCityState } from "./sim/createInitialCityState";
 import { tickCityState } from "./sim/tick";
-import { createCenteredBoxTown } from "./world/boxTown";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
@@ -39,10 +39,6 @@ console.info("Initial city simulation scaffold", {
   blueprints: cityState.knownBlueprintIds.length,
   stockpileFood: cityState.publicStockpile.food
 });
-const simTimer = window.setInterval(() => {
-  cityState = tickCityState(cityState);
-  simDebugOverlay.update(cityState);
-}, 1000);
 
 const playerEyeHeight = world.blockSize * PLAYER_EYE_HEIGHT_BLOCKS;
 const worldBlockX = (x: number) => (x - world.width / 2) * world.blockSize;
@@ -77,14 +73,20 @@ const materials = loadTerrainMaterials();
 const surfaceBlocks = buildSurfaceBlockMap(world);
 const { group: terrain } = buildFlatTerrain(world, materials, surfaceBlocks.rects);
 scene.add(terrain);
-const townBoxes = createCenteredBoxTown(world);
+const cityBuildingBoxes = cityBuildingsToConcreteBoxes(cityState.buildings, plotLayout);
 
 const concreteBoxes = new ConcreteBoxRenderer({
   world,
   materials,
-  boxes: townBoxes
+  boxes: cityBuildingBoxes
 });
 scene.add(concreteBoxes.group);
+
+const simTimer = window.setInterval(() => {
+  cityState = tickCityState(cityState);
+  simDebugOverlay.update(cityState);
+  concreteBoxes.setBoxes(cityBuildingsToConcreteBoxes(cityState.buildings, plotLayout));
+}, 1000);
 
 camera.position.set(
   worldBlockX(world.width / 2 - 30),

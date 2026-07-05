@@ -1,21 +1,7 @@
 import { BLUEPRINT_BY_ID } from "../blueprints";
+import { BUILDING_TYPE_COLORS } from "../buildingMetadata";
 import { createResourceInventory } from "../resources";
-import type { Agent, BuildingType, CityBuilding, CityState } from "../types";
-
-const BUILDING_COLORS: Record<BuildingType, string> = {
-  charter_hall: "light_blue",
-  home: "white",
-  market: "yellow",
-  workshop: "orange",
-  storage: "gray",
-  food: "green",
-  clinic: "red",
-  archive: "blue",
-  civic: "light_blue",
-  utility: "cyan",
-  lab: "purple",
-  inn: "brown"
-};
+import type { Agent, CityBuilding, CityState } from "../types";
 
 const canContributeConstructionLabor = (agent: Agent) =>
   agent.role === "founder" || agent.role === "builder" || agent.skills.building >= 1;
@@ -29,8 +15,12 @@ const buildingFromCompletedProject = (state: CityState, projectIndex: number): C
     id: `building-${state.buildings.length + 1}`,
     type: blueprint.buildingType,
     name: blueprint.name,
-    color: BUILDING_COLORS[blueprint.buildingType],
+    color: BUILDING_TYPE_COLORS[blueprint.buildingType],
     plotId: project.targetPlotId,
+    blueprintId: blueprint.id,
+    width: blueprint.buildWidth,
+    length: blueprint.buildLength,
+    height: blueprint.buildHeight,
     ownerAgentId: null,
     businessId: null,
     residents: [],

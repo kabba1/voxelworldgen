@@ -24,10 +24,17 @@ export class ConcreteBoxRenderer {
 
   private readonly cubeGeometry: THREE.BoxGeometry;
   private readonly matrixDummy = new THREE.Object3D();
+  private boxes: ConcreteBoxSpec[];
 
   constructor(private readonly options: ConcreteBoxRendererOptions) {
     this.group.name = "concrete-boxes";
     this.cubeGeometry = new THREE.BoxGeometry(options.world.blockSize, options.world.blockSize, options.world.blockSize);
+    this.boxes = [...options.boxes];
+    this.rebuild();
+  }
+
+  setBoxes(boxes: readonly ConcreteBoxSpec[]) {
+    this.boxes = [...boxes];
     this.rebuild();
   }
 
@@ -40,7 +47,7 @@ export class ConcreteBoxRenderer {
     this.group.clear();
     const cellsByBlock = new Map<ConcreteBlockId, ConcreteBlockCell[]>();
 
-    this.options.boxes.forEach((box, index) => {
+    this.boxes.forEach((box, index) => {
       const instance: ConcreteBoxInstance = {
         ...box,
         id: index + 1,

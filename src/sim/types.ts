@@ -39,6 +39,19 @@ export type BuildingType =
   | "lab"
   | "inn";
 
+export type BuildingColor =
+  | "light_blue"
+  | "white"
+  | "yellow"
+  | "orange"
+  | "gray"
+  | "green"
+  | "red"
+  | "blue"
+  | "cyan"
+  | "purple"
+  | "brown";
+
 export type BuildingFunctionId =
   | "read_charter"
   | "view_city_needs"
@@ -90,8 +103,12 @@ export type CityBuilding = {
   id: string;
   type: BuildingType;
   name: string;
-  color: string;
+  color: BuildingColor;
   plotId: string;
+  blueprintId: BlueprintId | null;
+  width: number;
+  length: number;
+  height: number;
   ownerAgentId: string | null;
   businessId: string | null;
   residents: string[];

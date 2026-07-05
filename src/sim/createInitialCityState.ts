@@ -1,4 +1,5 @@
 import { buildingFunctionIdsForType } from "./buildingFunctions";
+import { BUILDING_TYPE_COLORS } from "./buildingMetadata";
 import { STARTING_BLUEPRINT_IDS } from "./blueprints";
 import { CITY_CHARTER } from "./charter";
 import { DEFAULT_PUBLIC_STOCKPILE, cloneInventory, createResourceInventory } from "./resources";
@@ -51,8 +52,12 @@ const createCharterHall = (plotId: string): CityBuilding => ({
   id: "building-charter-hall",
   type: "charter_hall",
   name: "Charter Hall",
-  color: "light_blue",
+  color: BUILDING_TYPE_COLORS.charter_hall,
   plotId,
+  blueprintId: null,
+  width: 14,
+  length: 12,
+  height: 6,
   ownerAgentId: null,
   businessId: null,
   residents: [],
