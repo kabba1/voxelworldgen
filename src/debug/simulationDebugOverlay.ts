@@ -1,3 +1,5 @@
+import { selectCityNeeds, selectCompletedBuildingTypeCounts } from "../sim/selectors";
+import type { Agent } from "../sim/types";
 import type { AgentNeedId, CityState, ResourceId } from "../sim/types";
 
 const STOCKPILE_RESOURCES: readonly ResourceId[] = ["food", "wood", "stone", "tools", "money"];
@@ -21,10 +23,12 @@ const line = (label: string, value: string) => {
   return row;
 };
 
-const agentLine = (name: string, needs: Record<AgentNeedId, number>) => {
+const agentLine = (agent: Agent) => {
   const row = document.createElement("div");
   row.className = "sim-debug__agent";
-  row.textContent = `${name}: ${AGENT_NEEDS.map((need) => `${need} ${rounded(needs[need])}`).join(" | ")}`;
+  row.textContent = `${agent.name} (${agent.homeBuildingId ?? "homeless"}): ${AGENT_NEEDS.map(
+    (need) => `${need} ${rounded(agent.needs[need])}`
+  ).join(" | ")}`;
   return row;
 };
 
@@ -45,6 +49,13 @@ export class SimulationDebugOverlay {
   }
 
   update(state: CityState) {
+    const cityNeeds = selectCityNeeds(state);
+    const buildingTypeCounts = selectCompletedBuildingTypeCounts(state);
+    const buildingSummary =
+      Object.entries(buildingTypeCounts)
+        .map(([type, count]) => `${type} ${count}`)
+        .join(" | ") || "none";
+
     const title = document.createElement("div");
     title.className = "sim-debug__title";
     title.textContent = "Simulation";
@@ -60,7 +71,11 @@ export class SimulationDebugOverlay {
 
     const agents = document.createElement("div");
     agents.className = "sim-debug__section";
-    for (const agent of state.agents) agents.append(agentLine(agent.name, agent.needs));
+    for (const agent of state.agents) agents.append(agentLine(agent));
+
+    const buildings = document.createElement("div");
+    buildings.className = "sim-debug__section";
+    buildings.append(line("types", buildingSummary));
 
     const projects = document.createElement("div");
     projects.className = "sim-debug__section";
@@ -82,7 +97,9 @@ export class SimulationDebugOverlay {
       line("agents", rounded(state.agents.length)),
       line("buildings", rounded(state.buildings.length)),
       line("projects", rounded(state.projects.length)),
+      line("total food", rounded(cityNeeds.foodStockpile)),
       stockpile,
+      buildings,
       projects,
       agents
     );

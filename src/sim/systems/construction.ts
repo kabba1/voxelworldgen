@@ -3,6 +3,10 @@ import { BUILDING_TYPE_COLORS } from "../buildingMetadata";
 import { createResourceInventory } from "../resources";
 import type { Agent, CityBuilding, CityState } from "../types";
 
+const CONSTRUCTION_REST_COST = 0.4;
+
+const clampNeed = (value: number) => Math.max(0, Math.min(100, value));
+
 const canContributeConstructionLabor = (agent: Agent) =>
   agent.role === "founder" || agent.role === "builder" || agent.skills.building >= 1;
 
@@ -36,19 +40,48 @@ const buildingFromCompletedProject = (state: CityState, projectIndex: number): C
 
 export const updateConstruction = (state: CityState): CityState => {
   const projectIndex = state.projects.findIndex((project) => project.type === "build" && project.status === "active");
-  if (projectIndex < 0) return state;
+  if (projectIndex < 0) {
+    return {
+      ...state,
+      agents: state.agents.map((agent) =>
+        agent.currentAction?.functionId === "build_project" ? { ...agent, currentAction: null } : agent
+      )
+    };
+  }
 
   const project = state.projects[projectIndex];
   const contributors = state.agents.filter(canContributeConstructionLabor);
   if (contributors.length === 0) return state;
 
   const progressLabor = Math.min(project.requiredLabor, project.progressLabor + contributors.length);
-  const assignedAgentIds = [...new Set([...project.assignedAgentIds, ...contributors.map((agent) => agent.id)])];
+  const contributorIds = contributors.map((agent) => agent.id);
+  const contributorIdSet = new Set(contributorIds);
+  const assignedAgentIds = [...new Set([...project.assignedAgentIds, ...contributorIds])];
   const isComplete = progressLabor >= project.requiredLabor;
   const completedBuilding = isComplete ? buildingFromCompletedProject(state, projectIndex) : null;
 
   return {
     ...state,
+    agents: state.agents.map((agent) =>
+      contributorIdSet.has(agent.id)
+        ? {
+            ...agent,
+            needs: {
+              ...agent.needs,
+              rest: clampNeed(agent.needs.rest - CONSTRUCTION_REST_COST)
+            },
+            currentAction: {
+              id: `action-build-${state.tick}-${agent.id}`,
+              functionId: "build_project",
+              targetBuildingId: null,
+              projectId: project.id,
+              remainingTicks: 1
+            }
+          }
+        : agent.currentAction?.functionId === "build_project"
+          ? { ...agent, currentAction: null }
+          : agent
+    ),
     availablePlotIds:
       isComplete && project.targetPlotId !== null
         ? state.availablePlotIds.filter((plotId) => plotId !== project.targetPlotId)

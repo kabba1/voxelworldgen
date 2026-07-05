@@ -1,4 +1,5 @@
 import type { Agent, AgentNeedId, CityState } from "./types";
+import { assignHousing, produceFood, updateAgentNeedsFromBuildings } from "./systems/agentActions";
 import { updateConstruction } from "./systems/construction";
 import { updateProjects } from "./systems/projects";
 
@@ -34,5 +35,9 @@ export const tickCityState = (state: CityState): CityState => {
     agents: state.agents.map(decayAgentNeeds)
   };
 
-  return updateConstruction(updateProjects(decayedState));
+  const projectState = updateProjects(decayedState);
+  const constructionState = updateConstruction(projectState);
+  const housedState = assignHousing(constructionState);
+  const foodState = produceFood(housedState);
+  return updateAgentNeedsFromBuildings(foodState);
 };

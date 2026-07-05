@@ -1,4 +1,4 @@
-import type { CityState } from "./types";
+import type { BuildingType, CityState } from "./types";
 
 export type CityNeeds = {
   population: number;
@@ -16,7 +16,7 @@ export const selectCityNeeds = (state: CityState): CityNeeds => {
     .filter((building) => building.type === "home")
     .reduce((total, building) => total + building.capacity, 0);
   const buildingFood = state.buildings
-    .filter((building) => building.type !== "charter_hall")
+    .filter((building) => building.type === "food")
     .reduce((total, building) => total + building.inventory.food, 0);
   const foodBuildings = state.buildings.filter((building) => building.type === "food").length;
 
@@ -30,3 +30,12 @@ export const selectCityNeeds = (state: CityState): CityNeeds => {
     activeProjectCount: state.projects.filter((project) => project.status === "active").length
   };
 };
+
+export const selectCompletedBuildingTypeCounts = (state: CityState): Partial<Record<BuildingType, number>> =>
+  state.buildings.reduce<Partial<Record<BuildingType, number>>>(
+    (counts, building) => ({
+      ...counts,
+      [building.type]: (counts[building.type] ?? 0) + 1
+    }),
+    {}
+  );
