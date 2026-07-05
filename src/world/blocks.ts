@@ -60,6 +60,7 @@ export const BLOCK_KEYS = {
 
 export type BlockKey = (typeof BLOCK_KEYS)[BlockId];
 export type SolidBlockKey = Exclude<BlockKey, "air">;
+export type BlockRenderModel = "cube" | "cross" | "connected_pane" | "torch" | "bed" | "door";
 
 export type BlockDefinition = {
   id: BlockId;
@@ -69,6 +70,8 @@ export type BlockDefinition = {
   solid: boolean;
   texturePath: string | null;
   transparent?: boolean;
+  occludes?: boolean;
+  renderModel?: BlockRenderModel;
 };
 
 export type SolidBlockDefinition = BlockDefinition & {
@@ -182,7 +185,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0xa97b42,
     solid: true,
     texturePath: "/textures/oak_door.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "door"
   },
   [BLOCKS.glass]: {
     id: BLOCKS.glass,
@@ -191,7 +196,8 @@ export const BLOCK_DEFINITIONS = {
     color: 0xc4e7ec,
     solid: true,
     texturePath: "/textures/glass.png",
-    transparent: true
+    transparent: true,
+    occludes: false
   },
   [BLOCKS.glassPane]: {
     id: BLOCKS.glassPane,
@@ -200,7 +206,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0xc4e7ec,
     solid: true,
     texturePath: "/textures/glass_pane.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "connected_pane"
   },
   [BLOCKS.ironBars]: {
     id: BLOCKS.ironBars,
@@ -209,7 +217,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0xa7adb2,
     solid: true,
     texturePath: "/textures/iron_bars.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "connected_pane"
   },
   [BLOCKS.torch]: {
     id: BLOCKS.torch,
@@ -218,7 +228,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0xd99d43,
     solid: true,
     texturePath: "/textures/torch.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "torch"
   },
   [BLOCKS.bed]: {
     id: BLOCKS.bed,
@@ -226,7 +238,9 @@ export const BLOCK_DEFINITIONS = {
     name: "Bed",
     color: 0xb95c5c,
     solid: true,
-    texturePath: "/textures/bed.png"
+    texturePath: "/textures/bed.png",
+    occludes: false,
+    renderModel: "bed"
   },
   [BLOCKS.craftingTable]: {
     id: BLOCKS.craftingTable,
@@ -259,7 +273,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0xdfe6e8,
     solid: true,
     texturePath: "/textures/cobweb.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "cross"
   },
   [BLOCKS.gravel]: {
     id: BLOCKS.gravel,
@@ -284,7 +300,9 @@ export const BLOCK_DEFINITIONS = {
     color: 0x8d6d45,
     solid: true,
     texturePath: "/textures/dead_bush.png",
-    transparent: true
+    transparent: true,
+    occludes: false,
+    renderModel: "cross"
   }
 } as const satisfies Record<BlockId, BlockDefinition>;
 
@@ -314,6 +332,12 @@ export const blockIdToKey = (blockId: number): BlockKey => {
 
   return blockKey;
 };
+
+export const blockRenderModel = (blockId: SolidBlockId): BlockRenderModel =>
+  (BLOCK_DEFINITIONS[blockId] as BlockDefinition).renderModel ?? "cube";
+
+export const blockOccludesNeighbor = (blockId: SolidBlockId) =>
+  (BLOCK_DEFINITIONS[blockId] as BlockDefinition).occludes ?? true;
 
 export const isSolidBlockId = (blockId: number): blockId is SolidBlockId =>
   Boolean((BLOCK_DEFINITIONS as Partial<Record<number, BlockDefinition>>)[blockId]?.solid);

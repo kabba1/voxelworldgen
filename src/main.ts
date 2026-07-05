@@ -20,6 +20,7 @@ const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app root.");
 
 const VIEWER_AGENT_ID = "local-player";
+const IS_DEV = ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV ?? false);
 const seedWorld = new FlatWorld();
 const plotLayout = generatePlotLayout(seedWorld);
 const world = new PlotWorld(plotLayout, {
@@ -82,14 +83,18 @@ let editor: BlockEditor | null = null;
 let editableRenderer: EditableBlockRenderer | null = null;
 let plotInspector: PlotInspector | null = null;
 let disposeBlueprintDevTools: (() => void) | null = null;
+let blockPalette: { update: () => void; dispose: () => void } | null = null;
+let disposed = false;
 let lastTime = performance.now();
 
 const dispose = () => {
+  disposed = true;
   controller?.dispose();
   editor?.dispose();
   plotInspector?.dispose();
   editableRenderer?.dispose();
   disposeBlueprintDevTools?.();
+  blockPalette?.dispose();
   stats?.dispose();
   sky?.dispose();
   window.removeEventListener("resize", onResize);
@@ -136,7 +141,14 @@ const start = () => {
     inspectTerrainColumn: (x, z) => plotInspector?.inspectColumn(x, z) ?? false,
     canEditColumn: (x, z) => world.canBuild(VIEWER_AGENT_ID, x, z)
   });
+  scene.add(editor.group);
   disposeBlueprintDevTools = installBlueprintDevTools({ editableWorld });
+  if (IS_DEV) {
+    void import("./dev/blockPaletteOverlay").then(({ BlockPaletteOverlay }) => {
+      if (disposed || !editor) return;
+      blockPalette = new BlockPaletteOverlay({ editor });
+    });
+  }
 
   stats = new StatsOverlay(
     renderer,
@@ -153,6 +165,8 @@ const start = () => {
     lastTime = time;
 
     controller?.update(deltaSeconds);
+    editor?.update();
+    blockPalette?.update();
     const skyState = sky?.update(camera, deltaSeconds);
     if (skyState) {
       if (scene.background instanceof THREE.Color) scene.background.copy(skyState.skyColor);

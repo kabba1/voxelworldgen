@@ -17,14 +17,11 @@ This project uses selected block textures from the Good Vibes texture pack:
 - `public/textures/oak_planks.png` from `GoodVibes/minecraft/textures/block/oak_planks.png`
 - `public/textures/oak_door.png` from `GoodVibes/minecraft/textures/block/oak_door_bottom.png`
 - `public/textures/glass.png` from `GoodVibes/minecraft/textures/block/glass.png`
-- `public/textures/glass_pane.png` from `GoodVibes/minecraft/textures/block/glass_pane_top.png`
-- `public/textures/iron_bars.png` from `GoodVibes/minecraft/textures/block/iron_bars.png`
 - `public/textures/torch.png` from `GoodVibes/minecraft/textures/block/torch.png`
 - `public/textures/bed.png` from `GoodVibes/minecraft/textures/block/bed_head_top.png`
 - `public/textures/crafting_table.png` from `GoodVibes/minecraft/textures/block/crafting_table_front.png`
 - `public/textures/furnace.png` from `GoodVibes/minecraft/textures/block/furnace_front.png`
 - `public/textures/bookshelf.png` from `GoodVibes/minecraft/textures/block/bookshelf.png`
-- `public/textures/cobweb.png` from `GoodVibes/minecraft/textures/block/cobweb.png`
 - `public/textures/gravel.png` from `GoodVibes/minecraft/textures/block/gravel.png`
 - `public/textures/coarse_dirt.png` from `GoodVibes/minecraft/textures/block/coarse_dirt.png`
 - `public/textures/dead_bush.png` from `GoodVibes/minecraft/textures/block/dead_bush.png`
@@ -47,3 +44,9 @@ Source:
 
 - https://github.com/Phyronnaz/VoxelAssets/tree/master/GoodVibes
 - https://creativecommons.org/licenses/by/4.0/
+
+## Project-generated textures
+
+- `public/textures/cobweb.png` is a small project-generated transparent web texture.
+- `public/textures/glass_pane.png` is a small project-generated transparent pane texture.
+- `public/textures/iron_bars.png` is a small project-generated metal bar texture.
