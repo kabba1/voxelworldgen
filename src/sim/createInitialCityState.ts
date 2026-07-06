@@ -4,7 +4,7 @@ import { buildingFunctionIdsForType } from "./buildingFunctions";
 import { BUILDING_TYPE_COLORS } from "./buildingMetadata";
 import { CITY_CHARTER } from "./charter";
 import { DEFAULT_PUBLIC_STOCKPILE, createResourceInventory } from "./resources";
-import type { Agent, CityBuilding, CityState, PlotState, ResourceNode } from "./types";
+import type { Agent, CityBuilding, CityPathRect, CityState, PlotState, ResourceNode } from "./types";
 
 export type InitialCityPlot = {
   id: string;
@@ -21,6 +21,7 @@ export type InitialCityPlot = {
 type InitialCityStateOptions = {
   plots: readonly InitialCityPlot[];
   charterPlotId: string | null;
+  pathRects?: readonly CityPathRect[];
 };
 
 const AGENT_NAMES = ["Ada", "Babbage", "Grace", "Turing"] as const;
@@ -48,6 +49,7 @@ const createAgent = (index: number, charterPlot: InitialCityPlot | null): Agent 
     modelId: pickAgentModelForSeed(`${AGENT_NAMES[index] ?? "agent"}-${index}`).id,
     position,
     destination: null,
+    route: [],
     movementState: "idle",
     currentBuildingId: "building-charter-hall",
     destinationBuildingId: null,
@@ -151,18 +153,19 @@ const createCharterHall = (charterPlotId: string | null): CityBuilding => ({
   settings: {}
 });
 
-export const createInitialCityState = ({ plots, charterPlotId }: InitialCityStateOptions): CityState => {
+export const createInitialCityState = ({ plots, charterPlotId, pathRects = [] }: InitialCityStateOptions): CityState => {
   const charterPlot = plots.find((plot) => plot.id === charterPlotId) ?? plots[0] ?? null;
   const basePlotStates = createPlotStates(plots, charterPlot?.id ?? null);
   const resourceNodes = createStarterResourceNodes(basePlotStates, charterPlot?.id ?? null);
   const plotStates = attachResourceNodesToPlots(basePlotStates, resourceNodes);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     tick: 0,
     day: 1,
     charter: CITY_CHARTER,
     plotStates,
+    pathRects: pathRects.map((rect) => ({ ...rect })),
     resourceNodes,
     publicStockpile: createResourceInventory(DEFAULT_PUBLIC_STOCKPILE),
     treasury: 500,

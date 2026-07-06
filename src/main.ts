@@ -43,13 +43,17 @@ const centerPlot = [...plotLayout.plots].sort((a, b) => {
 const createFreshCityState = () =>
   createInitialCityState({
     plots: plotLayout.plots,
-    charterPlotId: centerPlot?.id ?? null
+    charterPlotId: centerPlot?.id ?? null,
+    pathRects: plotLayout.pathRects
   });
 
 const hydrateCityState = (state: CityState): CityState => ({
   ...state,
+  schemaVersion: state.schemaVersion ?? 2,
+  pathRects: state.pathRects?.length > 0 ? state.pathRects : plotLayout.pathRects,
   agents: state.agents.map((agent) => ({
     ...agent,
+    route: agent.route ?? [],
     modelId: agent.modelId && isAgentSpawnModelId(agent.modelId) ? agent.modelId : pickAgentModelForSeed(agent.id).id
   }))
 });

@@ -93,6 +93,13 @@ export type WorldPosition = {
   z: number;
 };
 
+export type CityPathRect = {
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+};
+
 export type AgentMovementState = "idle" | "walking" | "working" | "inside";
 
 export type PlotClaimStatus = "unclaimed" | "claimed" | "reserved" | "public";
@@ -265,6 +272,7 @@ export type Agent = {
   modelId: string;
   position: WorldPosition;
   destination: WorldPosition | null;
+  route: WorldPosition[];
   movementState: AgentMovementState;
   currentBuildingId: string | null;
   destinationBuildingId: string | null;
@@ -323,6 +331,7 @@ export type CityState = {
   day: number;
   charter: CityCharter;
   plotStates: PlotState[];
+  pathRects: CityPathRect[];
   resourceNodes: ResourceNode[];
   publicStockpile: ResourceInventory;
   treasury: number;

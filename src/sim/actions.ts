@@ -11,6 +11,7 @@ import type {
   BuildingFunction,
   Blueprint,
   BlueprintId,
+  CityPathRect,
   CityBuilding,
   CityState,
   PartialResourceInventory,
@@ -23,7 +24,7 @@ import type {
 } from "./types";
 
 const ARRIVAL_DISTANCE_BLOCKS = 1.5;
-const MOVE_BLOCKS_PER_TICK = 90;
+const MOVE_BLOCKS_PER_TICK = 12;
 const FOOD_LOW = 54;
 const REST_LOW = 36;
 const STOCKPILE_FOOD_TARGET_PER_AGENT = 4;
@@ -44,9 +45,183 @@ type ActionLike = Pick<
   | "reason"
 >;
 
+type PathIndex = {
+  cellSize: number;
+  cells: Map<string, number[]>;
+};
+
+const pathIndexCache = new WeakMap<readonly CityPathRect[], PathIndex>();
+
 const clampNeed = (value: number) => Math.max(0, Math.min(100, value));
 
 const distance = (a: WorldPosition, b: WorldPosition) => Math.hypot(a.x - b.x, a.z - b.z);
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const samePoint = (a: WorldPosition, b: WorldPosition) => distance(a, b) < 0.1;
+
+const rectCenter = (rect: CityPathRect): WorldPosition => ({
+  x: rect.x + rect.width / 2,
+  z: rect.z + rect.depth / 2
+});
+
+const pointInRect = (point: WorldPosition, rect: CityPathRect, margin = 0) =>
+  point.x >= rect.x - margin &&
+  point.x <= rect.x + rect.width + margin &&
+  point.z >= rect.z - margin &&
+  point.z <= rect.z + rect.depth + margin;
+
+const nearestPointInRect = (point: WorldPosition, rect: CityPathRect): WorldPosition => ({
+  x: clamp(point.x, rect.x, rect.x + rect.width),
+  z: clamp(point.z, rect.z, rect.z + rect.depth)
+});
+
+const squaredDistanceToRect = (point: WorldPosition, rect: CityPathRect) => {
+  const nearest = nearestPointInRect(point, rect);
+  return (point.x - nearest.x) ** 2 + (point.z - nearest.z) ** 2;
+};
+
+const rectsTouch = (a: CityPathRect, b: CityPathRect, margin = 0.5) =>
+  a.x <= b.x + b.width + margin &&
+  a.x + a.width + margin >= b.x &&
+  a.z <= b.z + b.depth + margin &&
+  a.z + a.depth + margin >= b.z;
+
+const rectConnectionPoint = (a: CityPathRect, b: CityPathRect): WorldPosition => {
+  const x0 = Math.max(a.x, b.x);
+  const x1 = Math.min(a.x + a.width, b.x + b.width);
+  const z0 = Math.max(a.z, b.z);
+  const z1 = Math.min(a.z + a.depth, b.z + b.depth);
+
+  return {
+    x: x0 <= x1 ? (x0 + x1) / 2 : (Math.min(a.x + a.width, b.x + b.width) + Math.max(a.x, b.x)) / 2,
+    z: z0 <= z1 ? (z0 + z1) / 2 : (Math.min(a.z + a.depth, b.z + b.depth) + Math.max(a.z, b.z)) / 2
+  };
+};
+
+const pushWaypoint = (waypoints: WorldPosition[], point: WorldPosition) => {
+  if (waypoints.length === 0 || !samePoint(waypoints[waypoints.length - 1], point)) waypoints.push(point);
+};
+
+const nearestPathRectIndex = (pathRects: readonly CityPathRect[], point: WorldPosition) => {
+  let bestIndex = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  pathRects.forEach((rect, index) => {
+    const score = squaredDistanceToRect(point, rect);
+    if (score < bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  });
+  return bestIndex;
+};
+
+const cellKey = (x: number, z: number) => `${x}:${z}`;
+
+const getPathIndex = (pathRects: readonly CityPathRect[]): PathIndex => {
+  const cached = pathIndexCache.get(pathRects);
+  if (cached) return cached;
+
+  const cellSize = 64;
+  const cells = new Map<string, number[]>();
+  pathRects.forEach((rect, index) => {
+    const minX = Math.floor((rect.x - 1) / cellSize);
+    const maxX = Math.floor((rect.x + rect.width + 1) / cellSize);
+    const minZ = Math.floor((rect.z - 1) / cellSize);
+    const maxZ = Math.floor((rect.z + rect.depth + 1) / cellSize);
+    for (let z = minZ; z <= maxZ; z += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const key = cellKey(x, z);
+        const entries = cells.get(key);
+        if (entries) {
+          entries.push(index);
+        } else {
+          cells.set(key, [index]);
+        }
+      }
+    }
+  });
+
+  const index = { cellSize, cells };
+  pathIndexCache.set(pathRects, index);
+  return index;
+};
+
+const neighboringPathRectIndices = (pathRects: readonly CityPathRect[], pathIndex: PathIndex, rectIndex: number) => {
+  const rect = pathRects[rectIndex];
+  if (!rect) return [];
+
+  const candidates = new Set<number>();
+  const minX = Math.floor((rect.x - 2) / pathIndex.cellSize);
+  const maxX = Math.floor((rect.x + rect.width + 2) / pathIndex.cellSize);
+  const minZ = Math.floor((rect.z - 2) / pathIndex.cellSize);
+  const maxZ = Math.floor((rect.z + rect.depth + 2) / pathIndex.cellSize);
+  for (let z = minZ; z <= maxZ; z += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      for (const candidate of pathIndex.cells.get(cellKey(x, z)) ?? []) {
+        if (candidate !== rectIndex && rectsTouch(rect, pathRects[candidate])) candidates.add(candidate);
+      }
+    }
+  }
+  return [...candidates];
+};
+
+const findPathRectRoute = (pathRects: readonly CityPathRect[], startIndex: number, endIndex: number) => {
+  if (startIndex === endIndex) return [startIndex];
+
+  const pathIndex = getPathIndex(pathRects);
+  const cameFrom = new Map<number, number | null>([[startIndex, null]]);
+  const queue = [startIndex];
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    for (const next of neighboringPathRectIndices(pathRects, pathIndex, current)) {
+      if (cameFrom.has(next)) continue;
+      cameFrom.set(next, current);
+      if (next === endIndex) {
+        const route = [endIndex];
+        let backtrack = current;
+        while (backtrack !== startIndex) {
+          route.push(backtrack);
+          backtrack = cameFrom.get(backtrack) ?? startIndex;
+        }
+        route.push(startIndex);
+        return route.reverse();
+      }
+      queue.push(next);
+    }
+  }
+
+  return null;
+};
+
+const pathWaypointsBetween = (state: CityState, start: WorldPosition, end: WorldPosition): WorldPosition[] => {
+  if (state.pathRects.length === 0) return [end];
+
+  const startIndex = nearestPathRectIndex(state.pathRects, start);
+  const endIndex = nearestPathRectIndex(state.pathRects, end);
+  if (startIndex < 0 || endIndex < 0) return [end];
+
+  const startRect = state.pathRects[startIndex];
+  const endRect = state.pathRects[endIndex];
+  const startPathPoint = pointInRect(start, startRect) ? start : nearestPointInRect(start, startRect);
+  const endPathPoint = pointInRect(end, endRect) ? end : nearestPointInRect(end, endRect);
+  const rectRoute = findPathRectRoute(state.pathRects, startIndex, endIndex);
+  const waypoints: WorldPosition[] = [];
+
+  pushWaypoint(waypoints, startPathPoint);
+  if (rectRoute) {
+    for (let i = 0; i < rectRoute.length - 1; i += 1) {
+      pushWaypoint(waypoints, rectConnectionPoint(state.pathRects[rectRoute[i]], state.pathRects[rectRoute[i + 1]]));
+    }
+  } else {
+    pushWaypoint(waypoints, { x: endPathPoint.x, z: startPathPoint.z });
+  }
+  pushWaypoint(waypoints, endPathPoint);
+  pushWaypoint(waypoints, end);
+
+  return waypoints.filter((point) => !samePoint(point, start));
+};
 
 const actionId = (state: CityState, agent: Agent, type: AgentActionType) => `action-${state.tick}-${agent.id}-${type}`;
 
@@ -270,16 +445,27 @@ export const updateAgentMovement = (state: CityState): CityState => ({
   ...state,
   agents: state.agents.map((agent) => {
     if (agent.destination === null) {
+      const [nextDestination, ...remainingRoute] = agent.route;
+      if (nextDestination) {
+        return {
+          ...agent,
+          destination: nextDestination,
+          route: remainingRoute,
+          movementState: "walking"
+        };
+      }
       return agent.movementState === "walking" ? { ...agent, movementState: "idle" } : agent;
     }
 
     const gap = distance(agent.position, agent.destination);
     if (gap <= ARRIVAL_DISTANCE_BLOCKS) {
+      const [nextDestination, ...remainingRoute] = agent.route;
       return {
         ...agent,
         position: agent.destination,
-        destination: null,
-        movementState: "idle"
+        destination: nextDestination ?? null,
+        route: remainingRoute,
+        movementState: nextDestination ? "walking" : "idle"
       };
     }
 
@@ -582,13 +768,15 @@ export const resolveAgentAction = (state: CityState, agentId: string, action: Va
   if (!agent || agent.currentAction !== null || !validateAction(state, agent, action)) return state;
 
   const currentAction = toAgentAction(state, agent, action);
-  const shouldTravel = action.destination !== null && !actionDestinationReached(agent, action);
+  const route = action.destination !== null && !actionDestinationReached(agent, action) ? pathWaypointsBetween(state, agent.position, action.destination) : [];
+  const [nextDestination, ...remainingRoute] = route;
   return updateAgent(state, agent.id, (entry) => ({
     ...entry,
     currentAction,
-    destination: shouldTravel ? action.destination : null,
+    destination: nextDestination ?? null,
+    route: remainingRoute,
     destinationBuildingId: action.targetBuildingId,
-    movementState: shouldTravel ? "walking" : movementStateForStartedAction(action)
+    movementState: nextDestination ? "walking" : movementStateForStartedAction(action)
   }));
 };
 
@@ -708,6 +896,7 @@ const clearFinishedAction = (state: CityState, agentId: string, movementState: A
     ...agent,
     currentAction: null,
     destination: null,
+    route: [],
     destinationBuildingId: null,
     movementState
   }));

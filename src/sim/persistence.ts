@@ -1,7 +1,7 @@
 import type { CityState } from "./types";
 
 const STORAGE_KEY = "agency.foundingLoopSnapshot.v1";
-export const SIM_SNAPSHOT_SCHEMA_VERSION = 1;
+export const SIM_SNAPSHOT_SCHEMA_VERSION = 2;
 
 type CityStateSnapshot = CityState & {
   schemaVersion: typeof SIM_SNAPSHOT_SCHEMA_VERSION;
@@ -12,15 +12,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const migrateCityStateSnapshot = (snapshot: unknown): CityStateSnapshot | null => {
   if (!isRecord(snapshot)) return null;
 
-  if (snapshot.schemaVersion === undefined) {
+  if (snapshot.schemaVersion === undefined || snapshot.schemaVersion === 1 || snapshot.schemaVersion === SIM_SNAPSHOT_SCHEMA_VERSION) {
+    const state = snapshot as CityState;
     return {
-      ...(snapshot as CityState),
-      schemaVersion: SIM_SNAPSHOT_SCHEMA_VERSION
+      ...state,
+      schemaVersion: SIM_SNAPSHOT_SCHEMA_VERSION,
+      pathRects: Array.isArray(state.pathRects) ? state.pathRects : [],
+      agents: Array.isArray(state.agents)
+        ? state.agents.map((agent) => ({
+            ...agent,
+            route: Array.isArray(agent.route) ? agent.route : []
+          }))
+        : []
     };
-  }
-
-  if (snapshot.schemaVersion === SIM_SNAPSHOT_SCHEMA_VERSION) {
-    return snapshot as CityStateSnapshot;
   }
 
   return null;
