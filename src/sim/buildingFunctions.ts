@@ -59,7 +59,7 @@ export const BUILDING_FUNCTIONS = [
     durationTicks: 4,
     capacity: 8,
     outputs: { labor: 4 },
-    allowedRoles: ["founder", "builder", "worker"]
+    allowedRoles: ["founder", "resident", "builder", "worker"]
   },
   {
     id: "rest",
@@ -75,10 +75,11 @@ export const BUILDING_FUNCTIONS = [
     buildingTypes: ["food"],
     requiresWorker: true,
     requiredAgentSkills: { farming: 1 },
+    requiredInventory: { tools: 1 },
     outputs: { food: 6 },
     durationTicks: 6,
     capacity: 3,
-    allowedRoles: ["founder", "farmer", "worker"]
+    allowedRoles: ["founder", "resident", "farmer", "worker"]
   },
   {
     id: "store_resource",
@@ -98,7 +99,7 @@ export const BUILDING_FUNCTIONS = [
     outputs: { tools: 1 },
     durationTicks: 4,
     capacity: 3,
-    allowedRoles: ["founder", "builder", "worker"]
+    allowedRoles: ["founder", "resident", "builder", "worker"]
   },
   {
     id: "buy_food",
@@ -118,7 +119,7 @@ export const BUILDING_FUNCTIONS = [
     durationTicks: 8,
     capacity: 8,
     outputs: { money: 10, labor: 4 },
-    allowedRoles: ["founder", "worker", "builder", "farmer", "merchant", "civic_clerk"]
+    allowedRoles: ["founder", "resident", "worker", "builder", "farmer", "merchant", "civic_clerk"]
   }
 ] as const satisfies readonly BuildingFunction[];
 

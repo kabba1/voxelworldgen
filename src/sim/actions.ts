@@ -371,6 +371,12 @@ const agentMeetsSkillRequirements = (agent: Agent, buildingFunction: BuildingFun
     ([skillId, required]) => agent.skills[skillId as keyof Agent["skills"]] >= (required ?? 0)
   );
 
+const agentRoleCanUseFunction = (agent: Agent, buildingFunction: BuildingFunction) => {
+  if (!buildingFunction.requiresWorker && !buildingFunction.allowedRoles) return true;
+  if (agent.role === null || agent.role === "visitor") return false;
+  return !buildingFunction.allowedRoles || buildingFunction.allowedRoles.includes(agent.role);
+};
+
 const buildingSupportsFunction = (building: CityBuilding, buildingFunction: BuildingFunction) =>
   building.status === "complete" &&
   building.functionIds.includes(buildingFunction.id) &&
@@ -382,6 +388,7 @@ const buildingCanSupplyFunction = (building: CityBuilding | null, buildingFuncti
 };
 
 const agentCanExecuteFunction = (agent: Agent, buildingFunction: BuildingFunction, building: CityBuilding | null) =>
+  agentRoleCanUseFunction(agent, buildingFunction) &&
   agentMeetsSkillRequirements(agent, buildingFunction) &&
   agent.cash >= (buildingFunction.requiredCash ?? 0) &&
   buildingCanSupplyFunction(building, buildingFunction);
@@ -741,6 +748,7 @@ const validateAction = (state: CityState, agent: Agent, action: ActionLike) => {
   }
 
   if (action.type === "eat") {
+    // Charter/public food and carried food are founding ration paths; buy_food metadata applies when a building sells food.
     if (agent.inventory.food > 0 || state.publicStockpile.food > 0) return true;
     const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
     const buildingFunction = BUILDING_FUNCTION_BY_ID.buy_food;
@@ -804,10 +812,24 @@ const projectWithReservationStatus = (project: Project, reservedMaterials: Parti
   };
 };
 
+const seededOperationalInventory = (blueprint: Blueprint, reservedMaterials: PartialResourceInventory): ResourceInventory => {
+  const inventory = createResourceInventory();
+  for (const functionId of blueprint.functionsUnlocked) {
+    const buildingFunction = BUILDING_FUNCTION_BY_ID[functionId];
+    for (const resourceId of RESOURCE_IDS) {
+      const required = buildingFunction.requiredInventory?.[resourceId] ?? 0;
+      if (required <= 0) continue;
+      inventory[resourceId] = Math.max(inventory[resourceId], Math.min(required, reservedMaterials[resourceId] ?? 0));
+    }
+  }
+  return inventory;
+};
+
 const buildingFromProject = (state: CityState, project: Project): CityBuilding | null => {
   if (project.blueprintId === null || project.targetPlotId === null) return null;
   const blueprint = BLUEPRINT_BY_ID[project.blueprintId];
   const ownerAgentId = state.plotStates.find((plot) => plot.plotId === project.targetPlotId)?.ownerAgentId ?? null;
+  const operationalInventory = seededOperationalInventory(blueprint, project.reservedMaterials);
 
   return {
     id: `building-${state.buildings.length + 1}`,
@@ -826,7 +848,7 @@ const buildingFromProject = (state: CityState, project: Project): CityBuilding |
     workers: [],
     capacity: blueprint.capacity,
     condition: 1,
-    inventory: createResourceInventory(),
+    inventory: operationalInventory,
     cash: 0,
     functionIds: [...blueprint.functionsUnlocked],
     settings: {}
