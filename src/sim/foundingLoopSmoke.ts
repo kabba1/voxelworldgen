@@ -16,6 +16,7 @@ export type FoundingLoopSmokeResult = {
   constructionEvents: number;
   producedFoodEvents: number;
   ateFoodEvents: number;
+  claimEventsBeforeGarden: number;
   eventChain: string[];
 };
 
@@ -65,22 +66,15 @@ const eventIndexAfter = (
 const projectWasProposedByAgent = (state: CityState, blueprintId: string) =>
   state.projects.some((project) => project.blueprintId === blueprintId && project.requestedByAgentId.startsWith("agent-"));
 
-const runFreshCity = (ticks: number) => {
+const createFreshSmokeCity = () => {
   const plots = makeSmokePlots();
-  let state = createInitialCityState({
+  return createInitialCityState({
     plots,
     charterPlotId: plots[24]?.id ?? plots[0]?.id ?? null
   });
-
-  for (let i = 0; i < ticks; i += 1) {
-    state = tickCityState(state);
-  }
-
-  return state;
 };
 
-export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
-  const state = runFreshCity(ticks);
+const foundingLoopIndexes = (state: CityState) => {
   const gardenProposedIndex = eventIndex(
     state,
     (summary, eventType) => eventType === "project_proposed" && summary.includes("Garden Plot")
@@ -91,10 +85,11 @@ export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
   );
   const foodProducedIndex = eventIndex(
     state,
-    (summary, eventType) => eventType === "building_used" && summary.includes("harvested") && summary.includes("food")
+    (summary, eventType) => eventType === "building_used" && summary.includes("Produce Food") && summary.includes("food")
   );
-  const foodDepositedIndex = eventIndex(
+  const foodDepositedIndex = eventIndexAfter(
     state,
+    foodProducedIndex,
     (summary, eventType) => eventType === "resource_deposited" && summary.includes("food")
   );
   const foodEatenIndex = eventIndexAfter(
@@ -111,6 +106,46 @@ export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
     (summary, eventType) => eventType === "building_completed" && summary.includes("Small Home")
   );
 
+  return {
+    gardenProposedIndex,
+    gardenCompleteIndex,
+    foodProducedIndex,
+    foodDepositedIndex,
+    foodEatenIndex,
+    homeProposedIndex,
+    homeCompleteIndex
+  };
+};
+
+const foundingLoopComplete = (state: CityState) => {
+  const indexes = foundingLoopIndexes(state);
+  return (
+    indexes.gardenProposedIndex >= 0 &&
+    indexes.gardenCompleteIndex > indexes.gardenProposedIndex &&
+    indexes.foodProducedIndex > indexes.gardenCompleteIndex &&
+    indexes.foodDepositedIndex > indexes.foodProducedIndex &&
+    indexes.foodEatenIndex > indexes.foodDepositedIndex &&
+    indexes.homeProposedIndex > indexes.gardenCompleteIndex &&
+    indexes.homeCompleteIndex > indexes.homeProposedIndex
+  );
+};
+
+export const runFoundingLoopSmoke = (maxTicks = 720): FoundingLoopSmokeResult => {
+  let state = createFreshSmokeCity();
+  for (let i = 0; i < maxTicks && !foundingLoopComplete(state); i += 1) {
+    state = tickCityState(state);
+  }
+
+  const {
+    gardenProposedIndex,
+    gardenCompleteIndex,
+    foodProducedIndex,
+    foodDepositedIndex,
+    foodEatenIndex,
+    homeProposedIndex,
+    homeCompleteIndex
+  } = foundingLoopIndexes(state);
+
   const gatheredEvents = countEvents(state, "resource_gathered");
   const depositedEvents = countEvents(state, "resource_deposited");
   const reservedEvents = countEvents(state, "resources_reserved");
@@ -119,9 +154,16 @@ export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
   const ateFoodEvents = countEvents(state, "agent_ate");
   const completedGarden = state.buildings.some((building) => building.blueprintId === "garden_plot");
   const completedHome = state.buildings.some((building) => building.blueprintId === "small_home");
+  const claimEventsBeforeGarden =
+    gardenProposedIndex < 0
+      ? countEvents(state, "plot_claimed")
+      : state.structuredEvents
+          .slice(0, gardenProposedIndex)
+          .filter((event) => event.eventType === "plot_claimed").length;
 
   assertSmoke(projectWasProposedByAgent(state, "garden_plot"), "no named agent proposed a garden project");
   assertSmoke(gardenProposedIndex >= 0, "garden proposal event is missing");
+  assertSmoke(claimEventsBeforeGarden < state.agents.length, "all founders claimed private plots before the garden was proposed");
   assertSmoke(gatheredEvents > 0, "no resource gathering events were recorded");
   assertSmoke(depositedEvents > 0, "no resource deposit events were recorded");
   assertSmoke(reservedEvents > 0, "no resource reservation events were recorded");
@@ -138,7 +180,7 @@ export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
 
   return {
     passed: true,
-    ticks,
+    ticks: state.tick,
     agentCount: state.agents.length,
     claimedPlots: state.plotStates.filter((plot) => plot.claimStatus === "claimed").length,
     projectCount: state.projects.length,
@@ -150,6 +192,7 @@ export const runFoundingLoopSmoke = (ticks = 520): FoundingLoopSmokeResult => {
     constructionEvents,
     producedFoodEvents,
     ateFoodEvents,
+    claimEventsBeforeGarden,
     eventChain: state.structuredEvents.map((event) => event.summary)
   };
 };

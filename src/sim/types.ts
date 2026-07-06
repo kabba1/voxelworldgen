@@ -318,6 +318,7 @@ export type Transaction = {
 };
 
 export type CityState = {
+  schemaVersion: number;
   tick: number;
   day: number;
   charter: CityCharter;

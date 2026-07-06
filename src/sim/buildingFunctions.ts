@@ -75,7 +75,6 @@ export const BUILDING_FUNCTIONS = [
     buildingTypes: ["food"],
     requiresWorker: true,
     requiredAgentSkills: { farming: 1 },
-    inputs: { tools: 1 },
     outputs: { food: 6 },
     durationTicks: 6,
     capacity: 3,

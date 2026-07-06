@@ -158,6 +158,7 @@ export const createInitialCityState = ({ plots, charterPlotId }: InitialCityStat
   const plotStates = attachResourceNodesToPlots(basePlotStates, resourceNodes);
 
   return {
+    schemaVersion: 1,
     tick: 0,
     day: 1,
     charter: CITY_CHARTER,

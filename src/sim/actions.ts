@@ -8,6 +8,7 @@ import type {
   Agent,
   AgentAction,
   AgentActionType,
+  BuildingFunction,
   Blueprint,
   BlueprintId,
   CityBuilding,
@@ -125,6 +126,11 @@ const projectCanFitPlot = (blueprint: Blueprint, plot: PlotState) =>
   plot.depth >= blueprint.buildLength + 4 &&
   (blueprint.requiredPlotGroup === undefined || plot.group >= blueprint.requiredPlotGroup);
 
+const agentMeetsBlueprintRequirements = (agent: Agent, blueprint: Blueprint) =>
+  Object.entries(blueprint.requiredSkills).every(
+    ([skillId, required]) => agent.skills[skillId as keyof Agent["skills"]] >= (required ?? 0)
+  );
+
 const plotIsFreeForProject = (plot: PlotState, agent: Agent) =>
   plot.claimStatus !== "public" &&
   plot.activeProjectId === null &&
@@ -181,6 +187,49 @@ const nearestNeededResourceNode = (state: CityState, agent: Agent, resourceIds: 
 
 const inventoryHasAny = (inventory: ResourceInventory, resources: readonly ResourceId[]) =>
   resources.some((resourceId) => inventory[resourceId] > 0);
+
+const inventorySatisfies = (inventory: ResourceInventory, required: PartialResourceInventory | undefined) =>
+  RESOURCE_IDS.every((resourceId) => inventory[resourceId] >= (required?.[resourceId] ?? 0));
+
+const agentMeetsSkillRequirements = (agent: Agent, buildingFunction: BuildingFunction) =>
+  Object.entries(buildingFunction.requiredAgentSkills ?? {}).every(
+    ([skillId, required]) => agent.skills[skillId as keyof Agent["skills"]] >= (required ?? 0)
+  );
+
+const buildingSupportsFunction = (building: CityBuilding, buildingFunction: BuildingFunction) =>
+  building.status === "complete" &&
+  building.functionIds.includes(buildingFunction.id) &&
+  (buildingFunction.buildingTypes as readonly string[]).includes(building.type);
+
+const buildingCanSupplyFunction = (building: CityBuilding | null, buildingFunction: BuildingFunction) => {
+  if (!building) return !buildingFunction.inputs && !buildingFunction.requiredInventory;
+  return inventorySatisfies(building.inventory, buildingFunction.inputs) && inventorySatisfies(building.inventory, buildingFunction.requiredInventory);
+};
+
+const agentCanExecuteFunction = (agent: Agent, buildingFunction: BuildingFunction, building: CityBuilding | null) =>
+  agentMeetsSkillRequirements(agent, buildingFunction) &&
+  agent.cash >= (buildingFunction.requiredCash ?? 0) &&
+  buildingCanSupplyFunction(building, buildingFunction);
+
+const applyInventoryDelta = (inventory: ResourceInventory, delta: PartialResourceInventory, sign: 1 | -1): ResourceInventory =>
+  RESOURCE_IDS.reduce(
+    (nextInventory, resourceId) => ({
+      ...nextInventory,
+      [resourceId]: nextInventory[resourceId] + sign * (delta[resourceId] ?? 0)
+    }),
+    cloneInventory(inventory)
+  );
+
+const nonZeroResources = (inventory: PartialResourceInventory): PartialResourceInventory =>
+  RESOURCE_IDS.reduce<PartialResourceInventory>((nonZero, resourceId) => {
+    const amount = inventory[resourceId] ?? 0;
+    return amount > 0 ? { ...nonZero, [resourceId]: amount } : nonZero;
+  }, {});
+
+const describeResources = (inventory: PartialResourceInventory) =>
+  Object.entries(nonZeroResources(inventory))
+    .map(([resource, amount]) => `${amount} ${resource}`)
+    .join(", ");
 
 const agentNeedsDeposit = (agent: Agent) => inventoryHasAny(agent.inventory, storableResources);
 
@@ -420,12 +469,12 @@ export const chooseAgentAction = (state: CityState, agent: Agent, actions: reado
   if (agent.needs.rest < REST_LOW) return preferredAction(actions, "rest") ?? actions[0];
 
   return (
-    preferredAction(actions, "claim_plot") ??
     preferredAction(actions, "propose_build_project") ??
     preferredAction(actions, "reserve_project_resources") ??
     preferredAction(actions, "gather_resource") ??
     preferredAction(actions, "work_project") ??
     preferredAction(actions, "use_building_function") ??
+    preferredAction(actions, "claim_plot") ??
     preferredAction(actions, "inspect_city_needs") ??
     actions[0]
   );
@@ -455,6 +504,7 @@ const validateProjectTarget = (state: CityState, agent: Agent, action: ActionLik
   const plot = state.plotStates.find((entry) => entry.plotId === action.targetPlotId);
   if (!blueprint || !plot) return false;
   if (!state.knownBlueprintIds.includes(action.blueprintId) || !agent.knownBlueprintIds.includes(action.blueprintId)) return false;
+  if (!agentMeetsBlueprintRequirements(agent, blueprint)) return false;
   if (hasOpenProjectForBlueprint(state, action.blueprintId)) return false;
   if (!projectCanFitPlot(blueprint, plot)) return false;
   return plotIsFreeForProject(plot, agent);
@@ -483,7 +533,8 @@ const validateAction = (state: CityState, agent: Agent, action: ActionLike) => {
 
   if (action.type === "deposit_resource") {
     const target = state.buildings.find((building) => building.id === action.targetBuildingId);
-    return !!target && target.status === "complete" && target.functionIds.includes("store_resource") && agentNeedsDeposit(agent);
+    const buildingFunction = BUILDING_FUNCTION_BY_ID.store_resource;
+    return !!target && buildingSupportsFunction(target, buildingFunction) && agentCanExecuteFunction(agent, buildingFunction, target) && agentNeedsDeposit(agent);
   }
 
   if (action.type === "work_project") {
@@ -491,23 +542,29 @@ const validateAction = (state: CityState, agent: Agent, action: ActionLike) => {
     const project = state.projects.find((entry) => entry.id === action.targetProjectId);
     if (!project || project.status !== "active" || hasMissingMaterials(project) || project.progressLabor >= project.requiredLabor) return false;
     const plot = state.plotStates.find((entry) => entry.plotId === project.targetPlotId);
-    return !!plot && plot.activeProjectId === project.id;
+    const buildingFunction = BUILDING_FUNCTION_BY_ID.build_project;
+    return !!plot && plot.activeProjectId === project.id && agentCanExecuteFunction(agent, buildingFunction, null);
   }
 
   if (action.type === "use_building_function") {
     const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
-    return !!building && building.status === "complete" && building.type === "food" && building.functionIds.includes("produce_food");
+    const functionId = functionIdForAction(action);
+    if (functionId === null) return false;
+    const buildingFunction = BUILDING_FUNCTION_BY_ID[functionId];
+    return !!building && buildingSupportsFunction(building, buildingFunction) && agentCanExecuteFunction(agent, buildingFunction, building);
   }
 
   if (action.type === "eat") {
     if (agent.inventory.food > 0 || state.publicStockpile.food > 0) return true;
     const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
-    return !!building && building.status === "complete" && building.type === "food" && building.inventory.food > 0;
+    const buildingFunction = BUILDING_FUNCTION_BY_ID.buy_food;
+    return !!building && buildingSupportsFunction(building, buildingFunction) && agentCanExecuteFunction(agent, buildingFunction, building);
   }
 
   if (action.type === "rest") {
     const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
-    if (!building || building.status !== "complete" || !building.functionIds.includes("rest")) return false;
+    const buildingFunction = BUILDING_FUNCTION_BY_ID.rest;
+    if (!building || !buildingSupportsFunction(building, buildingFunction) || !agentCanExecuteFunction(agent, buildingFunction, building)) return false;
     return building.type !== "home" || agent.homeBuildingId === building.id || building.residents.length < building.capacity;
   }
 
@@ -849,7 +906,9 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
   if (action.type === "work_project" && action.targetProjectId !== null) {
     const project = state.projects.find((entry) => entry.id === action.targetProjectId);
     if (!project) return clearFinishedAction(state, agent.id);
-    const labor = Math.max(2, 2 + agent.skills.building);
+    const buildingFunction = BUILDING_FUNCTION_BY_ID.build_project;
+    const skillBonus = Math.max(0, agent.skills.building - (buildingFunction.requiredAgentSkills?.building ?? 0));
+    const labor = Math.max(1, (buildingFunction.outputs?.labor ?? 1) + skillBonus);
     const progressLabor = Math.min(project.requiredLabor, project.progressLabor + labor);
     const workedState = appendSimEvent(
       clearFinishedAction(
@@ -890,21 +949,34 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
   if (action.type === "use_building_function" && action.targetBuildingId !== null) {
     const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
     if (!building) return clearFinishedAction(state, agent.id);
-    const foodProduced = 3 + Math.max(0, agent.skills.farming);
+    const functionId = action.functionId ?? functionIdForAction(action);
+    if (functionId === null) return clearFinishedAction(state, agent.id);
+    const buildingFunction = BUILDING_FUNCTION_BY_ID[functionId];
+    const outputs = nonZeroResources(buildingFunction.outputs ?? {});
+    const inputs = nonZeroResources(buildingFunction.inputs ?? {});
     return appendSimEvent(
       clearFinishedAction(
-        updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentBuildingId: building.id,
-          inventory: {
-            ...entry.inventory,
-            food: entry.inventory.food + foodProduced
-          },
-          needs: {
-            ...entry.needs,
-            rest: clampNeed(entry.needs.rest - 1)
-          }
-        })),
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            currentBuildingId: building.id,
+            cash: entry.cash - (buildingFunction.requiredCash ?? 0),
+            inventory: applyInventoryDelta(entry.inventory, outputs, 1),
+            needs: {
+              ...entry.needs,
+              rest: clampNeed(entry.needs.rest - 1)
+            }
+          })),
+          buildings: state.buildings.map((entry) =>
+            entry.id === building.id
+              ? {
+                  ...entry,
+                  cash: entry.cash + (buildingFunction.requiredCash ?? 0),
+                  inventory: applyInventoryDelta(entry.inventory, inputs, -1)
+                }
+              : entry
+          )
+        },
         agent.id
       ),
       {
@@ -912,15 +984,20 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
         eventType: "building_used",
         targetType: "building",
         targetId: building.id,
-        summary: `${agent.name} harvested ${foodProduced} food at ${building.name} and carried it for storage.`,
+        summary: `${agent.name} used ${buildingFunction.label} at ${building.name}${
+          describeResources(outputs) ? ` and carried ${describeResources(outputs)} for storage` : ""
+        }.`,
         reason: action.reason,
-        effect: { food: foodProduced }
+        cost: inputs,
+        effect: outputs
       }
     );
   }
 
   if (action.type === "eat") {
     const foodBuilding = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    const buyFoodFunction = BUILDING_FUNCTION_BY_ID.buy_food;
+    const price = buyFoodFunction.requiredCash ?? 0;
     const useInventory = agent.inventory.food > 0;
     const useBuilding = !useInventory && foodBuilding?.type === "food" && foodBuilding.inventory.food > 0;
     if (!useInventory && !useBuilding && state.publicStockpile.food <= 0) return clearFinishedAction(state, agent.id);
@@ -931,6 +1008,7 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
           ...updateAgent(state, agent.id, (entry) => ({
             ...entry,
             currentBuildingId: action.targetBuildingId,
+            cash: useBuilding ? entry.cash - price : entry.cash,
             inventory: {
               ...entry.inventory,
               food: useInventory ? entry.inventory.food - 1 : entry.inventory.food
@@ -952,6 +1030,7 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
                 entry.id === foodBuilding.id
                   ? {
                       ...entry,
+                      cash: entry.cash + price,
                       inventory: {
                         ...entry.inventory,
                         food: entry.inventory.food - 1
@@ -971,7 +1050,7 @@ const finishAction = (state: CityState, agent: Agent, action: AgentAction): City
         targetId: useInventory ? agent.id : useBuilding ? foodBuilding.id : action.targetBuildingId,
         summary: `${agent.name} ate food from ${useInventory ? "their pack" : useBuilding ? foodBuilding.name : "the public stockpile"}.`,
         reason: action.reason,
-        cost: { food: 1 }
+        cost: useBuilding ? { food: 1, money: price } : { food: 1 }
       }
     );
   }
