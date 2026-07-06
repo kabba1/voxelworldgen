@@ -1,6 +1,6 @@
 import type { CityState, SimEvent } from "./types";
 
-const MAX_EVENT_COUNT = 500;
+const MAX_EVENT_COUNT = 2000;
 
 export const appendCityEvents = (state: CityState, events: readonly string[]): CityState => {
   if (events.length === 0) return state;

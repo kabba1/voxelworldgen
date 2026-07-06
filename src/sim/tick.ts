@@ -1,4 +1,4 @@
-import { chooseAgentAction, generateValidActions, resolveAgentAction, updateAgentMovement } from "./actions";
+import { chooseAgentAction, generateValidActions, progressAgentActions, resolveAgentAction, updateAgentMovement } from "./actions";
 import type { Agent, CityState } from "./types";
 
 const NEED_DECAY = {
@@ -38,10 +38,11 @@ export const tickCityState = (state: CityState): CityState => {
   };
 
   nextState = updateAgentMovement(nextState);
+  nextState = progressAgentActions(nextState);
 
   for (const agent of nextState.agents) {
     const latestAgent = nextState.agents.find((entry) => entry.id === agent.id);
-    if (!latestAgent) continue;
+    if (!latestAgent || latestAgent.currentAction !== null) continue;
     const validActions = generateValidActions(nextState, latestAgent);
     const action = chooseAgentAction(nextState, latestAgent, validActions);
     nextState = resolveAgentAction(nextState, latestAgent.id, action);

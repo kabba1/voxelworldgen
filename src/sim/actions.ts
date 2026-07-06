@@ -1,5 +1,5 @@
 import { BLUEPRINT_BY_ID } from "./blueprints";
-import { buildingFunctionIdsForType } from "./buildingFunctions";
+import { BUILDING_FUNCTION_BY_ID } from "./buildingFunctions";
 import { BUILDING_TYPE_COLORS } from "./buildingMetadata";
 import { appendSimEvent } from "./events";
 import { RESOURCE_IDS, cloneInventory, createResourceInventory } from "./resources";
@@ -17,7 +17,6 @@ import type {
   Project,
   ResourceId,
   ResourceInventory,
-  ResourceNode,
   ValidAgentAction,
   WorldPosition
 } from "./types";
@@ -29,6 +28,20 @@ const REST_LOW = 36;
 const STOCKPILE_FOOD_TARGET_PER_AGENT = 4;
 
 const constructionResources: readonly ResourceId[] = ["wood", "stone", "tools"];
+const storableResources: readonly ResourceId[] = ["food", "wood", "stone", "tools"];
+
+type ActionLike = Pick<
+  AgentAction,
+  | "type"
+  | "targetBuildingId"
+  | "targetPlotId"
+  | "targetProjectId"
+  | "targetResourceNodeId"
+  | "resourceId"
+  | "blueprintId"
+  | "destination"
+  | "reason"
+>;
 
 const clampNeed = (value: number) => Math.max(0, Math.min(100, value));
 
@@ -36,16 +49,7 @@ const distance = (a: WorldPosition, b: WorldPosition) => Math.hypot(a.x - b.x, a
 
 const actionId = (state: CityState, agent: Agent, type: AgentActionType) => `action-${state.tick}-${agent.id}-${type}`;
 
-const toAgentAction = (state: CityState, action: ValidAgentAction, durationTicks = 1): AgentAction => ({
-  ...action,
-  functionId: functionIdForAction(action),
-  projectId: action.targetProjectId,
-  startedAtTick: state.tick,
-  durationTicks,
-  remainingTicks: durationTicks
-});
-
-const functionIdForAction = (action: ValidAgentAction): AgentAction["functionId"] => {
+const functionIdForAction = (action: ActionLike): AgentAction["functionId"] => {
   if (action.type === "inspect_city_needs") return "view_city_needs";
   if (action.type === "claim_plot") return "claim_home";
   if (action.type === "deposit_resource") return "store_resource";
@@ -56,6 +60,26 @@ const functionIdForAction = (action: ValidAgentAction): AgentAction["functionId"
   if (action.type === "eat") return "buy_food";
   if (action.type === "use_building_function") return "produce_food";
   return null;
+};
+
+const durationForAction = (action: ActionLike) => {
+  const functionId = functionIdForAction(action);
+  if (functionId !== null) return BUILDING_FUNCTION_BY_ID[functionId]?.durationTicks ?? 1;
+  if (action.type === "gather_resource") return 3;
+  return 1;
+};
+
+const toAgentAction = (state: CityState, agent: Agent, action: ValidAgentAction): AgentAction => {
+  const durationTicks = durationForAction(action);
+  return {
+    ...action,
+    id: actionId(state, agent, action.type),
+    functionId: functionIdForAction(action),
+    projectId: action.targetProjectId,
+    startedAtTick: state.tick,
+    durationTicks,
+    remainingTicks: durationTicks
+  };
 };
 
 const makeAction = (
@@ -110,7 +134,10 @@ const plotIsFreeForProject = (plot: PlotState, agent: Agent) =>
 const firstBuildablePlotForBlueprint = (state: CityState, agent: Agent, blueprintId: BlueprintId) => {
   const blueprint = BLUEPRINT_BY_ID[blueprintId];
   const claimed = agent.claimedPlotId
-    ? state.plotStates.find((plot) => plot.plotId === agent.claimedPlotId && projectCanFitPlot(blueprint, plot) && plotIsFreeForProject(plot, agent))
+    ? state.plotStates.find(
+        (plot) =>
+          plot.plotId === agent.claimedPlotId && projectCanFitPlot(blueprint, plot) && plotIsFreeForProject(plot, agent)
+      )
     : null;
 
   if (claimed) return claimed;
@@ -141,7 +168,8 @@ const buildingPosition = (state: CityState, buildingId: string | null) => {
   return state.plotStates.find((plot) => plot.plotId === building.plotId)?.center ?? null;
 };
 
-const charterHall = (state: CityState) => state.buildings.find((building) => building.type === "charter_hall") ?? null;
+const charterHall = (state: CityState) =>
+  state.buildings.find((building) => building.type === "charter_hall" && building.status === "complete") ?? null;
 
 const projectPosition = (state: CityState, project: Project) =>
   state.plotStates.find((plot) => plot.plotId === project.targetPlotId)?.center ?? null;
@@ -154,7 +182,7 @@ const nearestNeededResourceNode = (state: CityState, agent: Agent, resourceIds: 
 const inventoryHasAny = (inventory: ResourceInventory, resources: readonly ResourceId[]) =>
   resources.some((resourceId) => inventory[resourceId] > 0);
 
-const agentNeedsDeposit = (agent: Agent) => inventoryHasAny(agent.inventory, constructionResources) || agent.inventory.food > 0;
+const agentNeedsDeposit = (agent: Agent) => inventoryHasAny(agent.inventory, storableResources);
 
 const chooseProjectBlueprint = (state: CityState, agent: Agent): BlueprintId | null => {
   const needs = selectCityNeeds(state);
@@ -166,7 +194,7 @@ const chooseProjectBlueprint = (state: CityState, agent: Agent): BlueprintId | n
     return firstBuildablePlotForBlueprint(state, agent, "garden_plot") ? "garden_plot" : null;
   }
 
-  if (needs.population > needs.housingCapacity + openHomeCapacity && !hasOpenProjectForBlueprint(state, "small_home")) {
+  if (needs.foodBuildings > 0 && needs.population > needs.housingCapacity + openHomeCapacity && !hasOpenProjectForBlueprint(state, "small_home")) {
     return firstBuildablePlotForBlueprint(state, agent, "small_home") ? "small_home" : null;
   }
 
@@ -178,6 +206,16 @@ const openResourceProject = (state: CityState) =>
 
 const activeBuildProject = (state: CityState) =>
   state.projects.find((project) => project.type === "build" && project.status === "active") ?? null;
+
+const stockedFoodBuilding = (state: CityState, agent: Agent) =>
+  nearestBuilding(
+    state,
+    agent,
+    (building) => building.type === "food" && building.functionIds.includes("buy_food") && building.inventory.food > 0
+  );
+
+const foodProductionBuilding = (state: CityState, agent: Agent) =>
+  nearestBuilding(state, agent, (building) => building.type === "food" && building.functionIds.includes("produce_food"));
 
 export const updateAgentMovement = (state: CityState): CityState => ({
   ...state,
@@ -192,7 +230,7 @@ export const updateAgentMovement = (state: CityState): CityState => ({
         ...agent,
         position: agent.destination,
         destination: null,
-        movementState: agent.currentAction?.type === "work_project" ? "working" : "idle"
+        movementState: "idle"
       };
     }
 
@@ -210,20 +248,22 @@ export const updateAgentMovement = (state: CityState): CityState => ({
 });
 
 export const generateValidActions = (state: CityState, agent: Agent): ValidAgentAction[] => {
+  const hall = charterHall(state);
   const actions: ValidAgentAction[] = [
     makeAction(state, agent, "inspect_city_needs", "Check the charter board before choosing the next civic move.", {
-      targetBuildingId: charterHall(state)?.id ?? null,
-      destination: buildingPosition(state, charterHall(state)?.id ?? null)
+      targetBuildingId: hall?.id ?? null,
+      destination: buildingPosition(state, hall?.id ?? null)
     }),
     makeAction(state, agent, "idle", "No urgent valid action is better than waiting.")
   ];
 
-  if (agent.inventory.food > 0 || state.publicStockpile.food > 0) {
+  const foodBuilding = stockedFoodBuilding(state, agent);
+  if (agent.inventory.food > 0 || state.publicStockpile.food > 0 || foodBuilding !== null) {
     actions.push(
       makeAction(state, agent, "eat", "Food need is a direct survival pressure.", {
         resourceId: "food",
-        targetBuildingId: charterHall(state)?.id ?? null,
-        destination: agent.inventory.food > 0 ? null : buildingPosition(state, charterHall(state)?.id ?? null)
+        targetBuildingId: agent.inventory.food > 0 ? null : foodBuilding?.id ?? hall?.id ?? null,
+        destination: agent.inventory.food > 0 ? null : buildingPosition(state, foodBuilding?.id ?? hall?.id ?? null)
       })
     );
   }
@@ -248,7 +288,7 @@ export const generateValidActions = (state: CityState, agent: Agent): ValidAgent
   if (state.charter.laws.agentsCanClaimEmptyPlots && agent.claimedPlotId === null) {
     const claimPlot =
       state.plotStates
-        .filter((plot) => plot.claimStatus === "unclaimed" && plot.structureIds.length === 0)
+        .filter((plot) => plot.claimStatus === "unclaimed" && plot.structureIds.length === 0 && plot.activeProjectId === null)
         .sort((a, b) => distance(agent.position, a.center) - distance(agent.position, b.center))[0] ?? null;
     if (claimPlot) {
       actions.push(
@@ -271,12 +311,12 @@ export const generateValidActions = (state: CityState, agent: Agent): ValidAgent
           "propose_build_project",
           wantedBlueprintId === "garden_plot"
             ? "The city has no food production, so a garden is the highest pressure project."
-            : "The population has less housing than agents, so a home project is needed.",
+            : "The city has food production but too little housing, so a home project is needed.",
           {
             targetPlotId: plot.plotId,
-            targetBuildingId: charterHall(state)?.id ?? null,
+            targetBuildingId: hall?.id ?? null,
             blueprintId: wantedBlueprintId,
-            destination: buildingPosition(state, charterHall(state)?.id ?? null)
+            destination: buildingPosition(state, hall?.id ?? null)
           }
         )
       );
@@ -291,8 +331,8 @@ export const generateValidActions = (state: CityState, agent: Agent): ValidAgent
       actions.push(
         makeAction(state, agent, "reserve_project_resources", "Public resources can be reserved only for a proposed project.", {
           targetProjectId: resourceProject.id,
-          targetBuildingId: charterHall(state)?.id ?? null,
-          destination: buildingPosition(state, charterHall(state)?.id ?? null)
+          targetBuildingId: hall?.id ?? null,
+          destination: buildingPosition(state, hall?.id ?? null)
         })
       );
     }
@@ -312,9 +352,9 @@ export const generateValidActions = (state: CityState, agent: Agent): ValidAgent
 
   if (agentNeedsDeposit(agent)) {
     actions.push(
-      makeAction(state, agent, "deposit_resource", "Carried resources should go to the public stockpile before projects reserve them.", {
-        targetBuildingId: charterHall(state)?.id ?? null,
-        destination: buildingPosition(state, charterHall(state)?.id ?? null)
+      makeAction(state, agent, "deposit_resource", "Carried resources should be stored before the city can use them.", {
+        targetBuildingId: hall?.id ?? null,
+        destination: buildingPosition(state, hall?.id ?? null)
       })
     );
   }
@@ -331,14 +371,15 @@ export const generateValidActions = (state: CityState, agent: Agent): ValidAgent
     );
   }
 
-  const foodBuilding = nearestBuilding(state, agent, (building) => building.type === "food" && building.functionIds.includes("produce_food"));
+  const producer = foodProductionBuilding(state, agent);
   const cityNeeds = selectCityNeeds(state);
-  if (foodBuilding && cityNeeds.foodStockpile < cityNeeds.population * STOCKPILE_FOOD_TARGET_PER_AGENT) {
+  const lowestFoodNeed = Math.min(...state.agents.map((entry) => entry.needs.food));
+  if (producer && (cityNeeds.foodStockpile < cityNeeds.population * STOCKPILE_FOOD_TARGET_PER_AGENT || lowestFoodNeed < 78)) {
     actions.push(
-      makeAction(state, agent, "use_building_function", "The garden can produce food for the city stockpile.", {
-        targetBuildingId: foodBuilding.id,
+      makeAction(state, agent, "use_building_function", "The garden can produce food that must be stored before everyone can eat.", {
+        targetBuildingId: producer.id,
         resourceId: "food",
-        destination: buildingPosition(state, foodBuilding.id)
+        destination: buildingPosition(state, producer.id)
       })
     );
   }
@@ -350,19 +391,17 @@ const preferredAction = (actions: readonly ValidAgentAction[], type: AgentAction
   actions.find((action) => action.type === type) ?? null;
 
 export const chooseAgentAction = (state: CityState, agent: Agent, actions: readonly ValidAgentAction[]): ValidAgentAction => {
-  if (agent.destination !== null && agent.currentAction !== null) {
-    return makeAction(state, agent, agent.currentAction.type, agent.currentAction.reason, {
-      targetPlotId: agent.currentAction.targetPlotId,
-      targetBuildingId: agent.currentAction.targetBuildingId,
-      targetProjectId: agent.currentAction.targetProjectId,
-      targetResourceNodeId: agent.currentAction.targetResourceNodeId,
-      resourceId: agent.currentAction.resourceId,
-      blueprintId: agent.currentAction.blueprintId,
-      destination: agent.destination
-    });
+  if (agent.needs.food < FOOD_LOW) {
+    return (
+      preferredAction(actions, "eat") ??
+      preferredAction(actions, "use_building_function") ??
+      preferredAction(actions, "gather_resource") ??
+      actions[0]
+    );
   }
 
-  if (agent.needs.food < FOOD_LOW) return preferredAction(actions, "eat") ?? preferredAction(actions, "gather_resource") ?? actions[0];
+  if (agentNeedsDeposit(agent)) return preferredAction(actions, "deposit_resource") ?? actions[0];
+
   if (
     agent.homeBuildingId === null &&
     actions.some((action) => {
@@ -370,16 +409,16 @@ export const chooseAgentAction = (state: CityState, agent: Agent, actions: reado
       return action.type === "rest" && building?.type === "home";
     })
   ) {
-    return actions.find((action) => {
-      const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
-      return action.type === "rest" && building?.type === "home";
-    }) ?? actions[0];
+    return (
+      actions.find((action) => {
+        const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+        return action.type === "rest" && building?.type === "home";
+      }) ?? actions[0]
+    );
   }
-  if (agent.inventory.food > 0 && state.publicStockpile.food < state.agents.length * STOCKPILE_FOOD_TARGET_PER_AGENT) {
-    return preferredAction(actions, "deposit_resource") ?? actions[0];
-  }
-  if (inventoryHasAny(agent.inventory, constructionResources)) return preferredAction(actions, "deposit_resource") ?? actions[0];
+
   if (agent.needs.rest < REST_LOW) return preferredAction(actions, "rest") ?? actions[0];
+
   return (
     preferredAction(actions, "claim_plot") ??
     preferredAction(actions, "propose_build_project") ??
@@ -397,28 +436,104 @@ const updateAgent = (state: CityState, agentId: string, update: (agent: Agent) =
   agents: state.agents.map((agent) => (agent.id === agentId ? update(agent) : agent))
 });
 
-const setAgentTravel = (state: CityState, agent: Agent, action: ValidAgentAction): CityState => {
-  const current = toAgentAction(state, action);
-  if (action.destination === null || distance(agent.position, action.destination) <= ARRIVAL_DISTANCE_BLOCKS) {
-    return updateAgent(state, agent.id, (entry) => ({
-      ...entry,
-      currentAction: current,
-      movementState: action.type === "work_project" ? "working" : "idle",
-      destination: null
-    }));
-  }
+const actionDestinationReached = (agent: Agent, action: ActionLike) =>
+  action.destination === null || distance(agent.position, action.destination) <= ARRIVAL_DISTANCE_BLOCKS;
 
-  return updateAgent(state, agent.id, (entry) => ({
-    ...entry,
-    currentAction: current,
-    destination: action.destination,
-    destinationBuildingId: action.targetBuildingId,
-    movementState: "walking"
-  }));
+const isValidResourceNodeAccess = (state: CityState, agent: Agent, nodeId: string | null) => {
+  if (nodeId === null) return false;
+  const node = state.resourceNodes.find((entry) => entry.id === nodeId);
+  if (!node || node.amountRemaining <= 0) return false;
+  if (node.plotId === null) return true;
+  const plot = state.plotStates.find((entry) => entry.plotId === node.plotId);
+  if (!plot) return false;
+  return plot.claimStatus === "unclaimed" || plot.claimStatus === "public" || plot.ownerAgentId === agent.id;
 };
 
-const canResolveAtTarget = (agent: Agent, action: ValidAgentAction) =>
-  action.destination === null || distance(agent.position, action.destination) <= ARRIVAL_DISTANCE_BLOCKS;
+const validateProjectTarget = (state: CityState, agent: Agent, action: ActionLike) => {
+  if (action.blueprintId === null || action.targetPlotId === null) return false;
+  const blueprint = BLUEPRINT_BY_ID[action.blueprintId];
+  const plot = state.plotStates.find((entry) => entry.plotId === action.targetPlotId);
+  if (!blueprint || !plot) return false;
+  if (!state.knownBlueprintIds.includes(action.blueprintId) || !agent.knownBlueprintIds.includes(action.blueprintId)) return false;
+  if (hasOpenProjectForBlueprint(state, action.blueprintId)) return false;
+  if (!projectCanFitPlot(blueprint, plot)) return false;
+  return plotIsFreeForProject(plot, agent);
+};
+
+const validateAction = (state: CityState, agent: Agent, action: ActionLike) => {
+  if (action.type === "idle" || action.type === "inspect_city_needs") return true;
+
+  if (action.type === "claim_plot") {
+    if (!state.charter.laws.agentsCanClaimEmptyPlots || agent.claimedPlotId !== null || action.targetPlotId === null) return false;
+    const plot = state.plotStates.find((entry) => entry.plotId === action.targetPlotId);
+    return !!plot && plot.claimStatus === "unclaimed" && plot.structureIds.length === 0 && plot.activeProjectId === null;
+  }
+
+  if (action.type === "propose_build_project") return validateProjectTarget(state, agent, action);
+
+  if (action.type === "reserve_project_resources") {
+    if (action.targetProjectId === null) return false;
+    const project = state.projects.find((entry) => entry.id === action.targetProjectId);
+    if (!project || (project.status !== "proposed" && project.status !== "resource_blocked")) return false;
+    const missing = remainingMaterialsForProject(project);
+    return RESOURCE_IDS.some((resourceId) => (missing[resourceId] ?? 0) > 0 && state.publicStockpile[resourceId] > 0);
+  }
+
+  if (action.type === "gather_resource") return isValidResourceNodeAccess(state, agent, action.targetResourceNodeId);
+
+  if (action.type === "deposit_resource") {
+    const target = state.buildings.find((building) => building.id === action.targetBuildingId);
+    return !!target && target.status === "complete" && target.functionIds.includes("store_resource") && agentNeedsDeposit(agent);
+  }
+
+  if (action.type === "work_project") {
+    if (action.targetProjectId === null) return false;
+    const project = state.projects.find((entry) => entry.id === action.targetProjectId);
+    if (!project || project.status !== "active" || hasMissingMaterials(project) || project.progressLabor >= project.requiredLabor) return false;
+    const plot = state.plotStates.find((entry) => entry.plotId === project.targetPlotId);
+    return !!plot && plot.activeProjectId === project.id;
+  }
+
+  if (action.type === "use_building_function") {
+    const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    return !!building && building.status === "complete" && building.type === "food" && building.functionIds.includes("produce_food");
+  }
+
+  if (action.type === "eat") {
+    if (agent.inventory.food > 0 || state.publicStockpile.food > 0) return true;
+    const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    return !!building && building.status === "complete" && building.type === "food" && building.inventory.food > 0;
+  }
+
+  if (action.type === "rest") {
+    const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    if (!building || building.status !== "complete" || !building.functionIds.includes("rest")) return false;
+    return building.type !== "home" || agent.homeBuildingId === building.id || building.residents.length < building.capacity;
+  }
+
+  return false;
+};
+
+const movementStateForStartedAction = (action: ActionLike) => {
+  if (action.type === "gather_resource" || action.type === "work_project" || action.type === "use_building_function") return "working";
+  if (action.type === "rest" || action.type === "eat") return "inside";
+  return "idle";
+};
+
+export const resolveAgentAction = (state: CityState, agentId: string, action: ValidAgentAction): CityState => {
+  const agent = state.agents.find((entry) => entry.id === agentId);
+  if (!agent || agent.currentAction !== null || !validateAction(state, agent, action)) return state;
+
+  const currentAction = toAgentAction(state, agent, action);
+  const shouldTravel = action.destination !== null && !actionDestinationReached(agent, action);
+  return updateAgent(state, agent.id, (entry) => ({
+    ...entry,
+    currentAction,
+    destination: shouldTravel ? action.destination : null,
+    destinationBuildingId: action.targetBuildingId,
+    movementState: shouldTravel ? "walking" : movementStateForStartedAction(action)
+  }));
+};
 
 const reserveMaterials = (stockpile: ResourceInventory, project: Project) => {
   const publicStockpile = cloneInventory(stockpile);
@@ -531,37 +646,45 @@ const completeProjectIfReady = (state: CityState, projectId: string): CityState 
   });
 };
 
-const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgentAction): CityState => {
-  if (action.type === "idle") {
-    return updateAgent(state, agent.id, (entry) => ({ ...entry, currentAction: toAgentAction(state, action), movementState: "idle" }));
-  }
+const clearFinishedAction = (state: CityState, agentId: string, movementState: Agent["movementState"] = "idle") =>
+  updateAgent(state, agentId, (agent) => ({
+    ...agent,
+    currentAction: null,
+    destination: null,
+    destinationBuildingId: null,
+    movementState
+  }));
 
-  if (action.type === "inspect_city_needs") {
-    return updateAgent(state, agent.id, (entry) => ({
-      ...entry,
-      currentAction: toAgentAction(state, action),
-      currentBuildingId: action.targetBuildingId
-    }));
+const finishAction = (state: CityState, agent: Agent, action: AgentAction): CityState => {
+  if (!validateAction(state, agent, action)) return clearFinishedAction(state, agent.id);
+
+  if (action.type === "idle" || action.type === "inspect_city_needs") {
+    return clearFinishedAction(
+      updateAgent(state, agent.id, (entry) => ({
+        ...entry,
+        currentBuildingId: action.targetBuildingId
+      })),
+      agent.id
+    );
   }
 
   if (action.type === "claim_plot" && action.targetPlotId !== null) {
     const plot = state.plotStates.find((entry) => entry.plotId === action.targetPlotId);
-    if (!plot || plot.claimStatus !== "unclaimed") return state;
+    if (!plot) return clearFinishedAction(state, agent.id);
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          claimedPlotId: plot.plotId,
-          currentAction: toAgentAction(state, action),
-          movementState: "idle"
-        })),
-        plotStates: state.plotStates.map((entry) =>
-          entry.plotId === plot.plotId
-            ? { ...entry, claimStatus: "claimed", ownerAgentId: agent.id }
-            : entry
-        ),
-        availablePlotIds: state.availablePlotIds.filter((plotId) => plotId !== plot.plotId)
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            claimedPlotId: plot.plotId
+          })),
+          plotStates: state.plotStates.map((entry) =>
+            entry.plotId === plot.plotId ? { ...entry, claimStatus: "claimed", ownerAgentId: agent.id } : entry
+          ),
+          availablePlotIds: state.availablePlotIds.filter((plotId) => plotId !== plot.plotId)
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "plot_claimed",
@@ -593,20 +716,23 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
     };
 
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({ ...entry, currentAction: toAgentAction(state, action), currentBuildingId: action.targetBuildingId })),
-        projects: [...state.projects, project],
-        plotStates: state.plotStates.map((plot) =>
-          plot.plotId === action.targetPlotId
-            ? {
-                ...plot,
-                claimStatus: plot.claimStatus === "unclaimed" ? "reserved" : plot.claimStatus,
-                ownerAgentId: plot.ownerAgentId ?? agent.id,
-                activeProjectId: project.id
-              }
-            : plot
-        )
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({ ...entry, currentBuildingId: action.targetBuildingId })),
+          projects: [...state.projects, project],
+          plotStates: state.plotStates.map((plot) =>
+            plot.plotId === action.targetPlotId
+              ? {
+                  ...plot,
+                  claimStatus: plot.claimStatus === "unclaimed" ? "reserved" : plot.claimStatus,
+                  ownerAgentId: plot.ownerAgentId ?? agent.id,
+                  activeProjectId: project.id
+                }
+              : plot
+          )
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "project_proposed",
@@ -621,15 +747,18 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
 
   if (action.type === "reserve_project_resources" && action.targetProjectId !== null) {
     const project = state.projects.find((entry) => entry.id === action.targetProjectId);
-    if (!project) return state;
+    if (!project) return clearFinishedAction(state, agent.id);
     const reservation = reserveMaterials(state.publicStockpile, project);
     const nextProject = projectWithReservationStatus(project, reservation.reservedMaterials);
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({ ...entry, currentAction: toAgentAction(state, action), currentBuildingId: action.targetBuildingId })),
-        publicStockpile: reservation.publicStockpile,
-        projects: state.projects.map((entry) => (entry.id === project.id ? nextProject : entry))
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({ ...entry, currentBuildingId: action.targetBuildingId })),
+          publicStockpile: reservation.publicStockpile,
+          projects: state.projects.map((entry) => (entry.id === project.id ? nextProject : entry))
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "resources_reserved",
@@ -642,29 +771,30 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
     );
   }
 
-  if (action.type === "gather_resource" && action.targetResourceNodeId !== null && action.resourceId !== null) {
+  if (action.type === "gather_resource" && action.targetResourceNodeId !== null) {
     const node = state.resourceNodes.find((entry) => entry.id === action.targetResourceNodeId);
-    if (!node || node.amountRemaining <= 0) return state;
+    if (!node) return clearFinishedAction(state, agent.id);
     const amount = Math.min(node.gatherRate, node.amountRemaining);
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentAction: toAgentAction(state, action),
-          movementState: "working",
-          inventory: {
-            ...entry.inventory,
-            [node.resourceId]: entry.inventory[node.resourceId] + amount
-          },
-          needs: {
-            ...entry.needs,
-            rest: clampNeed(entry.needs.rest - 1)
-          }
-        })),
-        resourceNodes: state.resourceNodes.map((entry) =>
-          entry.id === node.id ? { ...entry, amountRemaining: entry.amountRemaining - amount } : entry
-        )
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            inventory: {
+              ...entry.inventory,
+              [node.resourceId]: entry.inventory[node.resourceId] + amount
+            },
+            needs: {
+              ...entry.needs,
+              rest: clampNeed(entry.needs.rest - 1)
+            }
+          })),
+          resourceNodes: state.resourceNodes.map((entry) =>
+            entry.id === node.id ? { ...entry, amountRemaining: entry.amountRemaining - amount } : entry
+          )
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "resource_gathered",
@@ -685,27 +815,31 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
     }
 
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentAction: toAgentAction(state, action),
-          currentBuildingId: action.targetBuildingId,
-          inventory: createResourceInventory()
-        })),
-        publicStockpile: RESOURCE_IDS.reduce(
-          (inventory, resourceId) => ({
-            ...inventory,
-            [resourceId]: inventory[resourceId] + carried[resourceId]
-          }),
-          cloneInventory(state.publicStockpile)
-        )
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            currentBuildingId: action.targetBuildingId,
+            inventory: createResourceInventory()
+          })),
+          publicStockpile: RESOURCE_IDS.reduce(
+            (inventory, resourceId) => ({
+              ...inventory,
+              [resourceId]: inventory[resourceId] + carried[resourceId]
+            }),
+            cloneInventory(state.publicStockpile)
+          )
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "resource_deposited",
         targetType: "building",
         targetId: action.targetBuildingId,
-        summary: `${agent.name} deposited resources at Charter Hall.`,
+        summary: `${agent.name} stored ${Object.entries(deposit)
+          .map(([resource, amount]) => `${amount} ${resource}`)
+          .join(", ")} at Charter Hall.`,
         reason: action.reason,
         effect: deposit
       }
@@ -714,31 +848,32 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
 
   if (action.type === "work_project" && action.targetProjectId !== null) {
     const project = state.projects.find((entry) => entry.id === action.targetProjectId);
-    if (!project || project.status !== "active") return state;
+    if (!project) return clearFinishedAction(state, agent.id);
     const labor = Math.max(2, 2 + agent.skills.building);
     const progressLabor = Math.min(project.requiredLabor, project.progressLabor + labor);
     const workedState = appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentAction: toAgentAction(state, action),
-          movementState: "working",
-          needs: {
-            ...entry.needs,
-            rest: clampNeed(entry.needs.rest - 2),
-            money: clampNeed(entry.needs.money + 1)
-          }
-        })),
-        projects: state.projects.map((entry) =>
-          entry.id === project.id
-            ? {
-                ...entry,
-                progressLabor,
-                assignedAgentIds: [...new Set([...entry.assignedAgentIds, agent.id])]
-              }
-            : entry
-        )
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            needs: {
+              ...entry.needs,
+              rest: clampNeed(entry.needs.rest - 2),
+              money: clampNeed(entry.needs.money + 1)
+            }
+          })),
+          projects: state.projects.map((entry) =>
+            entry.id === project.id
+              ? {
+                  ...entry,
+                  progressLabor,
+                  assignedAgentIds: [...new Set([...entry.assignedAgentIds, agent.id])]
+                }
+              : entry
+          )
+        },
+        agent.id
+      ),
       {
         actorAgentId: agent.id,
         eventType: "construction_worked",
@@ -752,37 +887,89 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
     return completeProjectIfReady(workedState, project.id);
   }
 
-  if (action.type === "eat") {
-    const useInventory = agent.inventory.food > 0;
-    if (!useInventory && state.publicStockpile.food <= 0) return state;
+  if (action.type === "use_building_function" && action.targetBuildingId !== null) {
+    const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    if (!building) return clearFinishedAction(state, agent.id);
+    const foodProduced = 3 + Math.max(0, agent.skills.farming);
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
+      clearFinishedAction(
+        updateAgent(state, agent.id, (entry) => ({
           ...entry,
-          currentAction: toAgentAction(state, action),
-          currentBuildingId: action.targetBuildingId,
+          currentBuildingId: building.id,
           inventory: {
             ...entry.inventory,
-            food: useInventory ? entry.inventory.food - 1 : entry.inventory.food
+            food: entry.inventory.food + foodProduced
           },
           needs: {
             ...entry.needs,
-            food: clampNeed(entry.needs.food + 34)
+            rest: clampNeed(entry.needs.rest - 1)
           }
         })),
-        publicStockpile: useInventory
-          ? state.publicStockpile
-          : {
-              ...state.publicStockpile,
-              food: state.publicStockpile.food - 1
+        agent.id
+      ),
+      {
+        actorAgentId: agent.id,
+        eventType: "building_used",
+        targetType: "building",
+        targetId: building.id,
+        summary: `${agent.name} harvested ${foodProduced} food at ${building.name} and carried it for storage.`,
+        reason: action.reason,
+        effect: { food: foodProduced }
+      }
+    );
+  }
+
+  if (action.type === "eat") {
+    const foodBuilding = state.buildings.find((entry) => entry.id === action.targetBuildingId);
+    const useInventory = agent.inventory.food > 0;
+    const useBuilding = !useInventory && foodBuilding?.type === "food" && foodBuilding.inventory.food > 0;
+    if (!useInventory && !useBuilding && state.publicStockpile.food <= 0) return clearFinishedAction(state, agent.id);
+
+    return appendSimEvent(
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            currentBuildingId: action.targetBuildingId,
+            inventory: {
+              ...entry.inventory,
+              food: useInventory ? entry.inventory.food - 1 : entry.inventory.food
+            },
+            needs: {
+              ...entry.needs,
+              food: clampNeed(entry.needs.food + 34)
             }
-      },
+          })),
+          publicStockpile:
+            useInventory || useBuilding
+              ? state.publicStockpile
+              : {
+                  ...state.publicStockpile,
+                  food: state.publicStockpile.food - 1
+                },
+          buildings: useBuilding
+            ? state.buildings.map((entry) =>
+                entry.id === foodBuilding.id
+                  ? {
+                      ...entry,
+                      inventory: {
+                        ...entry.inventory,
+                        food: entry.inventory.food - 1
+                      }
+                    }
+                  : entry
+              )
+            : state.buildings
+        },
+        agent.id,
+        "idle"
+      ),
       {
         actorAgentId: agent.id,
         eventType: "agent_ate",
-        targetType: useInventory ? "agent" : "building",
-        targetId: useInventory ? agent.id : action.targetBuildingId,
-        summary: `${agent.name} ate food.`,
+        targetType: useInventory ? "agent" : useBuilding ? "building" : "building",
+        targetId: useInventory ? agent.id : useBuilding ? foodBuilding.id : action.targetBuildingId,
+        summary: `${agent.name} ate food from ${useInventory ? "their pack" : useBuilding ? foodBuilding.name : "the public stockpile"}.`,
         reason: action.reason,
         cost: { food: 1 }
       }
@@ -795,26 +982,28 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
       restBuilding?.type === "home" && agent.homeBuildingId === null && restBuilding.residents.length < restBuilding.capacity;
     const isHome = action.targetBuildingId !== null && (action.targetBuildingId === agent.homeBuildingId || canClaimHome);
     return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentAction: toAgentAction(state, action, 3),
-          movementState: "inside",
-          currentBuildingId: action.targetBuildingId,
-          homeBuildingId: canClaimHome && restBuilding !== null ? restBuilding.id : entry.homeBuildingId,
-          needs: {
-            ...entry.needs,
-            rest: clampNeed(entry.needs.rest + (isHome ? 28 : 16)),
-            shelter: clampNeed(entry.needs.shelter + (isHome ? 18 : 4))
-          }
-        })),
-        buildings:
-          canClaimHome && restBuilding !== null
-            ? state.buildings.map((building) =>
-                building.id === restBuilding.id ? { ...building, residents: [...building.residents, agent.id] } : building
-              )
-            : state.buildings
-      },
+      clearFinishedAction(
+        {
+          ...updateAgent(state, agent.id, (entry) => ({
+            ...entry,
+            currentBuildingId: action.targetBuildingId,
+            homeBuildingId: canClaimHome && restBuilding !== null ? restBuilding.id : entry.homeBuildingId,
+            needs: {
+              ...entry.needs,
+              rest: clampNeed(entry.needs.rest + (isHome ? 28 : 16)),
+              shelter: clampNeed(entry.needs.shelter + (isHome ? 18 : 4))
+            }
+          })),
+          buildings:
+            canClaimHome && restBuilding !== null
+              ? state.buildings.map((building) =>
+                  building.id === restBuilding.id ? { ...building, residents: [...building.residents, agent.id] } : building
+                )
+              : state.buildings
+        },
+        agent.id,
+        "inside"
+      ),
       {
         actorAgentId: agent.id,
         eventType: "agent_rested",
@@ -826,56 +1015,29 @@ const resolveArrivedAction = (state: CityState, agent: Agent, action: ValidAgent
     );
   }
 
-  if (action.type === "use_building_function" && action.targetBuildingId !== null) {
-    const building = state.buildings.find((entry) => entry.id === action.targetBuildingId);
-    if (!building || building.type !== "food") return state;
-    const foodProduced = 3 + Math.max(0, agent.skills.farming);
-    return appendSimEvent(
-      {
-        ...updateAgent(state, agent.id, (entry) => ({
-          ...entry,
-          currentAction: toAgentAction(state, action, 2),
-          movementState: "working",
-          currentBuildingId: building.id,
-          needs: {
-            ...entry.needs,
-            rest: clampNeed(entry.needs.rest - 1)
-          }
-        })),
-        buildings: state.buildings.map((entry) =>
-          entry.id === building.id
-            ? {
-                ...entry,
-                inventory: {
-                  ...entry.inventory,
-                  food: entry.inventory.food + foodProduced
-                }
-              }
-            : entry
-        )
-      },
-      {
-        actorAgentId: agent.id,
-        eventType: "building_used",
-        targetType: "building",
-        targetId: building.id,
-        summary: `${agent.name} produced ${foodProduced} food at ${building.name}.`,
-        reason: action.reason,
-        effect: { food: foodProduced }
-      }
-    );
-  }
-
-  return state;
+  return clearFinishedAction(state, agent.id);
 };
 
-export const resolveAgentAction = (state: CityState, agentId: string, action: ValidAgentAction): CityState => {
-  const agent = state.agents.find((entry) => entry.id === agentId);
-  if (!agent) return state;
+export const progressAgentActions = (state: CityState): CityState => {
+  let nextState = state;
 
-  const travelState = setAgentTravel(state, agent, action);
-  const movedAgent = travelState.agents.find((entry) => entry.id === agentId);
-  if (!movedAgent || !canResolveAtTarget(movedAgent, action)) return travelState;
+  for (const agentSnapshot of state.agents) {
+    const agent = nextState.agents.find((entry) => entry.id === agentSnapshot.id);
+    if (!agent?.currentAction || agent.destination !== null) continue;
 
-  return resolveArrivedAction(travelState, movedAgent, action);
+    const currentAction = agent.currentAction;
+    const remainingTicks = currentAction.remainingTicks - 1;
+    if (remainingTicks > 0) {
+      nextState = updateAgent(nextState, agent.id, (entry) => ({
+        ...entry,
+        currentAction: entry.currentAction ? { ...entry.currentAction, remainingTicks } : null,
+        movementState: movementStateForStartedAction(currentAction)
+      }));
+      continue;
+    }
+
+    nextState = finishAction(nextState, agent, { ...currentAction, remainingTicks: 0 });
+  }
+
+  return nextState;
 };
