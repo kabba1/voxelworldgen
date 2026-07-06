@@ -13,10 +13,10 @@ export const createResourceInventory = (overrides: PartialResourceInventory = {}
 });
 
 export const DEFAULT_PUBLIC_STOCKPILE: ResourceInventory = createResourceInventory({
-  food: 30,
-  wood: 100,
-  stone: 80,
-  tools: 10,
+  food: 18,
+  wood: 8,
+  stone: 3,
+  tools: 4,
   money: 500
 });
 

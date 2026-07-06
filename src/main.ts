@@ -4,10 +4,13 @@ import { SimulationDebugOverlay } from "./debug/simulationDebugOverlay";
 import { PlayerCameraController } from "./input/PlayerCameraController";
 import { cityBuildingsToConcreteBoxes } from "./render/cityBuildingBoxes";
 import { ConcreteBoxRenderer } from "./render/concreteBoxRenderer";
+import { SimEntityRenderer } from "./render/simEntityRenderer";
 import { buildFlatTerrain } from "./render/terrainMesh";
 import { loadTerrainMaterials } from "./render/terrainMaterials";
 import { createInitialCityState } from "./sim/createInitialCityState";
+import { clearSavedCityState, loadCityState, saveCityState } from "./sim/persistence";
 import { tickCityState } from "./sim/tick";
+import type { CityState } from "./sim/types";
 import { FlatWorld } from "./world/flatWorld";
 import { PlotWorld } from "./world/plotWorld";
 import { generatePlotLayout } from "./world/plots";
@@ -27,16 +30,62 @@ const world = new PlotWorld(plotLayout, {
   dirtDepth: seedWorld.dirtDepth,
   grassDepth: seedWorld.grassDepth
 });
-let cityState = createInitialCityState({
-  availablePlotIds: plotLayout.plots.map((plot) => plot.id),
-  charterPlotId: plotLayout.plots[0]?.id ?? null
-});
+
+const centerPlot = [...plotLayout.plots].sort((a, b) => {
+  const centerX = plotLayout.bounds.width / 2;
+  const centerZ = plotLayout.bounds.depth / 2;
+  const da = Math.hypot(a.centerX - centerX, a.centerZ - centerZ);
+  const db = Math.hypot(b.centerX - centerX, b.centerZ - centerZ);
+  return da - db;
+})[0];
+
+const createFreshCityState = () =>
+  createInitialCityState({
+    plots: plotLayout.plots,
+    charterPlotId: centerPlot?.id ?? null
+  });
+
+const savedState = loadCityState();
+let cityState: CityState = savedState && savedState.plotStates?.length > 0 ? savedState : createFreshCityState();
+let paused = false;
+let simSpeed = 4;
+let selectedPlotId: string | null = null;
+
 const simDebugOverlay = new SimulationDebugOverlay(app);
-simDebugOverlay.update(cityState);
-console.info("Initial city simulation scaffold", {
+const updateOverlay = () =>
+  simDebugOverlay.update(cityState, {
+    paused,
+    speed: simSpeed,
+    selectedPlotId,
+    onTogglePause: () => {
+      paused = !paused;
+      updateOverlay();
+    },
+    onSpeedChange: (speed) => {
+      simSpeed = speed;
+      paused = false;
+      updateOverlay();
+    },
+    onSave: () => {
+      saveCityState(cityState);
+      updateOverlay();
+    },
+    onLoad: () => {
+      cityState = loadCityState() ?? cityState;
+      renderSimState();
+    },
+    onReset: () => {
+      clearSavedCityState();
+      cityState = createFreshCityState();
+      renderSimState();
+    }
+  });
+
+console.info("Initial agency founding loop", {
   agents: cityState.agents.length,
   buildings: cityState.buildings.length,
-  blueprints: cityState.knownBlueprintIds.length,
+  plots: cityState.plotStates.length,
+  resourceNodes: cityState.resourceNodes.length,
   stockpileFood: cityState.publicStockpile.food
 });
 
@@ -62,6 +111,11 @@ renderer.domElement.setAttribute("aria-label", "Generated plot world viewport");
 renderer.domElement.addEventListener("click", () => renderer.domElement.focus());
 app.appendChild(renderer.domElement);
 
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -world.worldHeight());
+const groundHit = new THREE.Vector3();
+
 const hemisphereLight = new THREE.HemisphereLight(0xdff5ff, 0x6d5a46, 1.85);
 scene.add(hemisphereLight);
 
@@ -82,11 +136,28 @@ const concreteBoxes = new ConcreteBoxRenderer({
 });
 scene.add(concreteBoxes.group);
 
-const simTimer = window.setInterval(() => {
-  cityState = tickCityState(cityState);
-  simDebugOverlay.update(cityState);
+const simEntities = new SimEntityRenderer({ world });
+scene.add(simEntities.group);
+
+const renderSimState = () => {
+  updateOverlay();
   concreteBoxes.setBoxes(cityBuildingsToConcreteBoxes(cityState.buildings, plotLayout));
-}, 1000);
+  simEntities.setState(cityState, selectedPlotId);
+};
+
+renderSimState();
+
+const agencyWindow = window as typeof window & {
+  __AGENCY_GET_STATE__?: () => CityState;
+  __AGENCY_TICK__?: (ticks: number) => CityState;
+};
+agencyWindow.__AGENCY_GET_STATE__ = () => cityState;
+agencyWindow.__AGENCY_TICK__ = (ticks: number) => {
+  const count = Math.max(0, Math.floor(ticks));
+  for (let i = 0; i < count; i += 1) cityState = tickCityState(cityState);
+  renderSimState();
+  return cityState;
+};
 
 camera.position.set(
   worldBlockX(world.width / 2 - 30),
@@ -99,6 +170,8 @@ controller.lookAt(new THREE.Vector3(worldBlockX(world.width / 2), world.worldHei
 
 let lastTime = performance.now();
 let disposed = false;
+let simAccumulator = 0;
+let autosaveAccumulator = 0;
 
 const onResize = () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -115,20 +188,36 @@ const onContextRestored = () => {
   console.info("WebGL context restored.");
 };
 
+const onPointerDown = (event: PointerEvent) => {
+  if (event.button !== 0) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+  raycaster.setFromCamera(pointer, camera);
+  if (!raycaster.ray.intersectPlane(groundPlane, groundHit)) return;
+
+  const blockX = Math.floor(groundHit.x / world.blockSize + world.width / 2);
+  const blockZ = Math.floor(groundHit.z / world.blockSize + world.depth / 2);
+  selectedPlotId = world.plotAt(blockX, blockZ)?.id ?? null;
+  renderSimState();
+};
+
 const dispose = () => {
   if (disposed) return;
   disposed = true;
   controller.dispose();
   concreteBoxes.dispose();
+  simEntities.dispose();
   simDebugOverlay.dispose();
-  window.clearInterval(simTimer);
   window.removeEventListener("resize", onResize);
+  renderer.domElement.removeEventListener("pointerdown", onPointerDown);
   renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
   renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
   renderer.dispose();
 };
 
 window.addEventListener("resize", onResize);
+renderer.domElement.addEventListener("pointerdown", onPointerDown);
 renderer.domElement.addEventListener("webglcontextlost", onContextLost);
 renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
 window.addEventListener("beforeunload", dispose);
@@ -138,5 +227,23 @@ renderer.setAnimationLoop((time) => {
   lastTime = time;
 
   controller.update(deltaSeconds);
+
+  if (!paused) {
+    simAccumulator += deltaSeconds * simSpeed;
+    autosaveAccumulator += deltaSeconds;
+    let changed = false;
+    while (simAccumulator >= 1) {
+      cityState = tickCityState(cityState);
+      simAccumulator -= 1;
+      changed = true;
+    }
+
+    if (changed) renderSimState();
+    if (autosaveAccumulator > 10) {
+      saveCityState(cityState);
+      autosaveAccumulator = 0;
+    }
+  }
+
   renderer.render(scene, camera);
 });

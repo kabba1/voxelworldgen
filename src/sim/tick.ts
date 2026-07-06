@@ -1,45 +1,51 @@
-import type { Agent, AgentNeedId, CityState } from "./types";
-import { applySimpleAgentPolicy } from "./agents/simplePolicy";
-import { assignHousing, produceFood, updateAgentNeedsFromBuildings } from "./systems/agentActions";
-import { updateConstruction } from "./systems/construction";
-import { updateProjects } from "./systems/projects";
+import { chooseAgentAction, generateValidActions, resolveAgentAction, updateAgentMovement } from "./actions";
+import type { Agent, CityState } from "./types";
 
-export const TICKS_PER_DAY = 24;
-
-const NEED_DECAY_PER_TICK: Record<AgentNeedId, number> = {
-  food: 0.8,
-  rest: 0.6,
-  shelter: 0.15,
-  money: 0.05,
-  knowledge: 0.1
-};
+const NEED_DECAY = {
+  food: 1.5,
+  rest: 0.8,
+  shelter: 0.45,
+  money: 0.2,
+  knowledge: 0.12
+} as const satisfies Record<keyof Agent["needs"], number>;
 
 const clampNeed = (value: number) => Math.max(0, Math.min(100, value));
 
-const decayAgentNeeds = (agent: Agent): Agent => ({
+const decayNeeds = (agent: Agent): Agent => ({
   ...agent,
   needs: {
-    food: clampNeed(agent.needs.food - NEED_DECAY_PER_TICK.food),
-    rest: clampNeed(agent.needs.rest - NEED_DECAY_PER_TICK.rest),
-    shelter: clampNeed(agent.needs.shelter - NEED_DECAY_PER_TICK.shelter),
-    money: clampNeed(agent.needs.money - NEED_DECAY_PER_TICK.money),
-    knowledge: clampNeed(agent.needs.knowledge - NEED_DECAY_PER_TICK.knowledge)
+    food: clampNeed(agent.needs.food - NEED_DECAY.food),
+    rest: clampNeed(agent.needs.rest - NEED_DECAY.rest),
+    shelter: clampNeed(agent.homeBuildingId === null ? agent.needs.shelter - NEED_DECAY.shelter : agent.needs.shelter + 0.35),
+    money: clampNeed(agent.needs.money - NEED_DECAY.money),
+    knowledge: clampNeed(agent.needs.knowledge - NEED_DECAY.knowledge)
   }
 });
 
-export const tickCityState = (state: CityState): CityState => {
-  const nextTick = state.tick + 1;
-  const decayedState: CityState = {
+const advanceClock = (state: CityState): CityState => {
+  const tick = state.tick + 1;
+  return {
     ...state,
-    tick: nextTick,
-    day: Math.floor(nextTick / TICKS_PER_DAY) + 1,
-    agents: state.agents.map(decayAgentNeeds)
+    tick,
+    day: Math.floor(tick / 24) + 1
+  };
+};
+
+export const tickCityState = (state: CityState): CityState => {
+  let nextState: CityState = {
+    ...advanceClock(state),
+    agents: state.agents.map(decayNeeds)
   };
 
-  const projectState = updateProjects(decayedState);
-  const actionState = applySimpleAgentPolicy(projectState);
-  const constructionState = updateConstruction(actionState);
-  const housedState = assignHousing(constructionState);
-  const foodState = produceFood(housedState);
-  return updateAgentNeedsFromBuildings(foodState);
+  nextState = updateAgentMovement(nextState);
+
+  for (const agent of nextState.agents) {
+    const latestAgent = nextState.agents.find((entry) => entry.id === agent.id);
+    if (!latestAgent) continue;
+    const validActions = generateValidActions(nextState, latestAgent);
+    const action = chooseAgentAction(nextState, latestAgent, validActions);
+    nextState = resolveAgentAction(nextState, latestAgent.id, action);
+  }
+
+  return nextState;
 };

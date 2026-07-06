@@ -65,6 +65,7 @@ export const cityBuildingsToConcreteBoxes = (
 ): ConcreteBoxSpec[] => {
   const plotsById = new Map(plotLayout.plots.map((plot) => [plot.id, plot]));
   return buildings.flatMap((building) => {
+    if (building.status !== "complete") return [];
     const plot = plotsById.get(building.plotId);
     return plot ? [boxForBuilding(building, plot)] : [];
   });

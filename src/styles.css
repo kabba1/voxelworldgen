@@ -43,7 +43,7 @@ canvas {
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .sim-debug__title {
@@ -72,6 +72,27 @@ canvas {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid rgb(255 255 255 / 14%);
+}
+
+.sim-debug__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.sim-debug__button {
+  padding: 3px 7px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 10%);
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sim-debug__button:hover {
+  background: rgb(255 255 255 / 18%);
 }
 
 .sim-debug__agent,

@@ -88,6 +88,85 @@ export type CityPriorityId =
 export type ResourceInventory = Record<ResourceId, number>;
 export type PartialResourceInventory = Partial<Record<ResourceId, number>>;
 
+export type WorldPosition = {
+  x: number;
+  z: number;
+};
+
+export type AgentMovementState = "idle" | "walking" | "working" | "inside";
+
+export type PlotClaimStatus = "unclaimed" | "claimed" | "reserved" | "public";
+
+export type PlotState = {
+  plotId: string;
+  group: 1 | 2 | 3 | 4;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+  area: number;
+  center: WorldPosition;
+  claimStatus: PlotClaimStatus;
+  ownerAgentId: string | null;
+  structureIds: string[];
+  resourceNodeIds: string[];
+  activeProjectId: string | null;
+};
+
+export type ResourceNode = {
+  id: string;
+  plotId: string | null;
+  position: WorldPosition;
+  resourceId: Extract<ResourceId, "food" | "wood" | "stone">;
+  amountRemaining: number;
+  gatherRate: number;
+};
+
+export type BuildingLifecycleStatus = "planned" | "under_construction" | "complete";
+
+export type AgentActionType =
+  | "inspect_city_needs"
+  | "claim_plot"
+  | "gather_resource"
+  | "deposit_resource"
+  | "propose_build_project"
+  | "reserve_project_resources"
+  | "work_project"
+  | "use_building_function"
+  | "rest"
+  | "eat"
+  | "idle";
+
+export type SimEventType =
+  | "city_inspected"
+  | "plot_claimed"
+  | "resource_gathered"
+  | "resource_deposited"
+  | "project_proposed"
+  | "resources_reserved"
+  | "construction_worked"
+  | "building_completed"
+  | "building_used"
+  | "agent_rested"
+  | "agent_ate"
+  | "agent_idle";
+
+export type SimEventTargetType = "city" | "plot" | "building" | "project" | "resource_node" | "agent";
+
+export type SimEvent = {
+  id: string;
+  tick: number;
+  day: number;
+  actorAgentId: string | null;
+  eventType: SimEventType;
+  targetType: SimEventTargetType;
+  targetId: string | null;
+  summary: string;
+  reason: string;
+  cost?: PartialResourceInventory;
+  effect?: PartialResourceInventory;
+};
+
 export type CityCharter = {
   purpose: string;
   priorityOrder: readonly CityPriorityId[];
@@ -105,6 +184,7 @@ export type CityBuilding = {
   type: BuildingType;
   name: string;
   color: BuildingColor;
+  status: BuildingLifecycleStatus;
   plotId: string;
   blueprintId: BlueprintId | null;
   width: number;
@@ -160,19 +240,36 @@ export type Blueprint = {
 
 export type AgentAction = {
   id: string;
-  functionId: BuildingFunctionId;
+  type: AgentActionType;
+  functionId: BuildingFunctionId | null;
+  actorAgentId: string;
   targetBuildingId: string | null;
+  targetPlotId: string | null;
+  targetProjectId: string | null;
+  targetResourceNodeId: string | null;
   projectId: string | null;
+  resourceId: ResourceId | null;
+  blueprintId: BlueprintId | null;
+  destination: WorldPosition | null;
+  reason: string;
+  startedAtTick: number;
+  durationTicks: number;
   remainingTicks: number;
 };
+
+export type ValidAgentAction = Omit<AgentAction, "functionId" | "projectId" | "startedAtTick" | "durationTicks" | "remainingTicks">;
 
 export type Agent = {
   id: string;
   name: string;
+  position: WorldPosition;
+  destination: WorldPosition | null;
+  movementState: AgentMovementState;
   currentBuildingId: string | null;
   destinationBuildingId: string | null;
   homeBuildingId: string | null;
   workplaceBuildingId: string | null;
+  claimedPlotId: string | null;
   cash: number;
   inventory: ResourceInventory;
   needs: Record<AgentNeedId, number>;
@@ -198,6 +295,7 @@ export type Project = {
   type: "build" | "upgrade" | "repair" | "deliver" | "research";
   status: ProjectStatus;
   requestedByAgentId: string;
+  reason: string;
   assignedAgentIds: string[];
   targetPlotId: string | null;
   blueprintId: BlueprintId | null;
@@ -222,6 +320,8 @@ export type CityState = {
   tick: number;
   day: number;
   charter: CityCharter;
+  plotStates: PlotState[];
+  resourceNodes: ResourceNode[];
   publicStockpile: ResourceInventory;
   treasury: number;
   knownBlueprintIds: BlueprintId[];
@@ -230,5 +330,6 @@ export type CityState = {
   buildings: CityBuilding[];
   projects: Project[];
   transactions: Transaction[];
+  structuredEvents: SimEvent[];
   events: string[];
 };
