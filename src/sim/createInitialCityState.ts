@@ -1,3 +1,4 @@
+import { pickAgentModelForSeed } from "../agents/agentModels";
 import { STARTING_BLUEPRINT_IDS } from "./blueprints";
 import { buildingFunctionIdsForType } from "./buildingFunctions";
 import { BUILDING_TYPE_COLORS } from "./buildingMetadata";
@@ -44,6 +45,7 @@ const createAgent = (index: number, charterPlot: InitialCityPlot | null): Agent 
   return {
     id: `agent-${index + 1}`,
     name: AGENT_NAMES[index] ?? `Agent ${index + 1}`,
+    modelId: pickAgentModelForSeed(`${AGENT_NAMES[index] ?? "agent"}-${index}`).id,
     position,
     destination: null,
     movementState: "idle",

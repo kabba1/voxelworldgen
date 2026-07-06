@@ -164,11 +164,16 @@ export const AGENT_MODEL_LIBRARY: readonly AgentModelDefinition[] = AGENT_MODEL_
   };
 });
 
-export const AGENT_SPAWN_MODELS = AGENT_MODEL_LIBRARY.filter((model) => model.agentEligible);
+export const AGENT_SPAWN_MODELS = AGENT_MODEL_LIBRARY.filter(
+  (model) => model.agentEligible && model.category !== "costume" && !model.id.includes("zombie")
+);
 export const DEFAULT_AGENT_MODEL_ID = "casual_male";
 
 export const getAgentModelDefinition = (modelId: string) =>
   AGENT_MODEL_LIBRARY.find((model) => model.id === modelId) ?? null;
+
+export const isAgentSpawnModelId = (modelId: string) =>
+  AGENT_SPAWN_MODELS.some((model) => model.id === modelId);
 
 export const pickAgentModelForSeed = (seed: string, models = AGENT_SPAWN_MODELS) => {
   if (models.length === 0) {

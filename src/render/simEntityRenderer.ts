@@ -1,10 +1,20 @@
 import * as THREE from "three";
+import { pickAgentModelForSeed } from "../agents/agentModels";
 import { BLUEPRINT_BY_ID } from "../sim/blueprints";
-import type { CityState, ResourceId, WorldPosition } from "../sim/types";
+import type { Agent, CityState, ResourceId, WorldPosition } from "../sim/types";
 import type { PlotWorld } from "../world/plotWorld";
+import { AgentModelLoader, type LoadedAgentModel } from "./agentModelLoader";
 
 type SimEntityRendererOptions = {
   world: PlotWorld;
+};
+
+type AgentVisual = {
+  root: THREE.Group;
+  mixer: THREE.AnimationMixer | null;
+  clips: THREE.AnimationClip[];
+  modelId: string;
+  currentClipName: string | null;
 };
 
 const RESOURCE_COLORS: Record<Extract<ResourceId, "food" | "wood" | "stone">, number> = {
@@ -18,6 +28,8 @@ const PROJECT_COLORS = {
   resource_blocked: 0xdb7c3c,
   active: 0x8ee06c
 } as const;
+
+const TARGET_AGENT_HEIGHT_BLOCKS = 2.35;
 
 const worldBlockX = (world: PlotWorld, x: number) => (x - world.width / 2) * world.blockSize;
 const worldBlockY = (world: PlotWorld, y: number) => y * world.blockSize;
@@ -40,55 +52,215 @@ const setBlockPosition = (object: THREE.Object3D, world: PlotWorld, position: Wo
   object.position.set(worldBlockX(world, position.x), worldBlockY(world, yBlocks), worldBlockZ(world, position.z));
 };
 
+const modelIdForAgent = (agent: Agent) => agent.modelId ?? pickAgentModelForSeed(agent.id).id;
+
+const clipNameForAgent = (agent: Agent) => {
+  if (agent.movementState === "walking") return "Walk";
+  if (agent.movementState === "working") {
+    if (agent.currentAction?.type === "gather_resource") return "PickUp";
+    return "Punch";
+  }
+  return "Idle";
+};
+
+const findClip = (clips: readonly THREE.AnimationClip[], preferredName: string) =>
+  clips.find((clip) => clip.name === preferredName) ??
+  clips.find((clip) => clip.name.toLowerCase().includes(preferredName.toLowerCase())) ??
+  clips.find((clip) => clip.name === "Idle") ??
+  clips[0] ??
+  null;
+
 export class SimEntityRenderer {
   readonly group = new THREE.Group();
 
+  private readonly resourceGroup = new THREE.Group();
+  private readonly projectGroup = new THREE.Group();
+  private readonly selectedGroup = new THREE.Group();
+  private readonly agentGroup = new THREE.Group();
+  private readonly agentModelLoader = new AgentModelLoader();
+  private readonly agentVisuals = new Map<string, AgentVisual>();
+  private readonly loadingAgentIds = new Set<string>();
+
+  private latestState: CityState | null = null;
+  private selectedPlotId: string | null = null;
+  private loadVersion = 0;
+
   constructor(private readonly options: SimEntityRendererOptions) {
     this.group.name = "sim-entities";
+    this.resourceGroup.name = "resource-nodes";
+    this.projectGroup.name = "project-frames";
+    this.selectedGroup.name = "selected-plot";
+    this.agentGroup.name = "agents";
+    this.group.add(this.selectedGroup, this.resourceGroup, this.projectGroup, this.agentGroup);
   }
 
   setState(state: CityState, selectedPlotId: string | null = null) {
-    for (const child of this.group.children) disposeObject(child);
-    this.group.clear();
+    this.latestState = state;
+    this.selectedPlotId = selectedPlotId;
+    this.clearGroup(this.selectedGroup);
+    this.clearGroup(this.resourceGroup);
+    this.clearGroup(this.projectGroup);
     this.addSelectedPlot(state, selectedPlotId);
     this.addResourceNodes(state);
     this.addProjectFrames(state);
-    this.addAgents(state);
+    this.syncAgents(state);
+  }
+
+  update(deltaSeconds: number) {
+    for (const visual of this.agentVisuals.values()) {
+      visual.mixer?.update(deltaSeconds);
+    }
   }
 
   dispose() {
-    for (const child of this.group.children) disposeObject(child);
+    this.clearGroup(this.selectedGroup);
+    this.clearGroup(this.resourceGroup);
+    this.clearGroup(this.projectGroup);
+    this.agentGroup.clear();
+    this.agentVisuals.clear();
+    this.loadingAgentIds.clear();
     this.group.clear();
   }
 
-  private addAgents(state: CityState) {
-    const bodyGeometry = new THREE.CylinderGeometry(0.16, 0.18, 0.58, 8);
-    const headGeometry = new THREE.SphereGeometry(0.18, 8, 8);
+  private clearGroup(group: THREE.Group) {
+    for (const child of group.children) disposeObject(child);
+    group.clear();
+  }
 
-    state.agents.forEach((agent, index) => {
-      const group = new THREE.Group();
-      group.name = `${agent.id}-${agent.movementState}`;
-      const hue = (index * 0.19 + 0.58) % 1;
-      const color = new THREE.Color().setHSL(hue, 0.68, agent.movementState === "working" ? 0.62 : 0.52);
-      const body = new THREE.Mesh(bodyGeometry.clone(), new THREE.MeshLambertMaterial({ color }));
-      body.position.y = 0.22;
-      const head = new THREE.Mesh(headGeometry.clone(), new THREE.MeshLambertMaterial({ color: 0xf3d7b0 }));
-      head.position.y = 0.6;
-      group.add(body, head);
+  private syncAgents(state: CityState) {
+    const liveAgentIds = new Set(state.agents.map((agent) => agent.id));
+    for (const [agentId, visual] of this.agentVisuals) {
+      if (!liveAgentIds.has(agentId)) {
+        this.agentGroup.remove(visual.root);
+        visual.mixer?.stopAllAction();
+        this.agentVisuals.delete(agentId);
+      }
+    }
 
-      if (agent.movementState === "working") {
-        const pulse = new THREE.Mesh(
-          new THREE.RingGeometry(0.22, 0.32, 12),
-          new THREE.MeshBasicMaterial({ color: 0xffdf6e, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
-        );
-        pulse.rotation.x = -Math.PI / 2;
-        pulse.position.y = 0.02;
-        group.add(pulse);
+    for (const agent of state.agents) {
+      const modelId = modelIdForAgent(agent);
+      const visual = this.agentVisuals.get(agent.id);
+      if (visual && visual.modelId === modelId) {
+        this.updateAgentVisual(agent, visual);
+        continue;
       }
 
-      setBlockPosition(group, this.options.world, agent.position, this.options.world.height + 0.45);
-      this.group.add(group);
+      if (!this.loadingAgentIds.has(agent.id)) {
+        this.loadAgentVisual(agent, modelId, this.loadVersion);
+      }
+    }
+  }
+
+  private async loadAgentVisual(agent: Agent, modelId: string, version: number) {
+    this.loadingAgentIds.add(agent.id);
+    try {
+      const loaded = await this.agentModelLoader.load(modelId);
+      if (version !== this.loadVersion || this.latestState === null) return;
+      const latestAgent = this.latestState.agents.find((entry) => entry.id === agent.id);
+      if (!latestAgent) return;
+
+      const oldVisual = this.agentVisuals.get(agent.id);
+      if (oldVisual) {
+        this.agentGroup.remove(oldVisual.root);
+        oldVisual.mixer?.stopAllAction();
+      }
+
+      const visual = this.createAgentVisual(loaded, modelId);
+      this.agentVisuals.set(agent.id, visual);
+      this.agentGroup.add(visual.root);
+      this.updateAgentVisual(latestAgent, visual);
+    } catch (error) {
+      console.warn(`Failed to load agent model ${modelId}.`, error);
+      this.addFallbackAgent(agent);
+    } finally {
+      this.loadingAgentIds.delete(agent.id);
+    }
+  }
+
+  private createAgentVisual(loaded: LoadedAgentModel, modelId: string): AgentVisual {
+    const root = new THREE.Group();
+    root.name = `agent:${modelId}`;
+    const model = loaded.root;
+    model.rotation.y = Math.PI;
+    this.normalizeAgentModel(model);
+    root.add(model);
+
+    return {
+      root,
+      mixer: loaded.animations.length > 0 ? new THREE.AnimationMixer(model) : null,
+      clips: loaded.animations,
+      modelId,
+      currentClipName: null
+    };
+  }
+
+  private normalizeAgentModel(model: THREE.Group) {
+    model.updateMatrixWorld(true);
+    const sourceBox = new THREE.Box3().setFromObject(model);
+    const sourceHeight = sourceBox.max.y - sourceBox.min.y;
+    if (sourceHeight <= 0) return;
+
+    const targetHeight = TARGET_AGENT_HEIGHT_BLOCKS * this.options.world.blockSize;
+    const scale = targetHeight / sourceHeight;
+    model.scale.setScalar(scale);
+    model.updateMatrixWorld(true);
+
+    const scaledBox = new THREE.Box3().setFromObject(model);
+    model.position.set(
+      -((scaledBox.min.x + scaledBox.max.x) / 2),
+      -scaledBox.min.y,
+      -((scaledBox.min.z + scaledBox.max.z) / 2)
+    );
+  }
+
+  private updateAgentVisual(agent: Agent, visual: AgentVisual) {
+    setBlockPosition(visual.root, this.options.world, agent.position, this.options.world.height);
+    this.faceDestination(agent, visual.root);
+    this.playAgentClip(agent, visual);
+  }
+
+  private faceDestination(agent: Agent, root: THREE.Group) {
+    const destination = agent.destination ?? agent.currentAction?.destination ?? null;
+    if (!destination) return;
+    const dx = destination.x - agent.position.x;
+    const dz = destination.z - agent.position.z;
+    if (Math.abs(dx) + Math.abs(dz) < 0.01) return;
+    root.rotation.y = Math.atan2(dx, dz);
+  }
+
+  private playAgentClip(agent: Agent, visual: AgentVisual) {
+    if (!visual.mixer) return;
+    const preferredName = clipNameForAgent(agent);
+    if (visual.currentClipName === preferredName) return;
+    const clip = findClip(visual.clips, preferredName);
+    if (!clip) return;
+
+    visual.mixer.stopAllAction();
+    const action = visual.mixer.clipAction(clip);
+    action.reset();
+    action.fadeIn(0.12);
+    action.play();
+    visual.currentClipName = preferredName;
+  }
+
+  private addFallbackAgent(agent: Agent) {
+    if (this.agentVisuals.has(agent.id)) return;
+    const root = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.18, 0.58, 8),
+      new THREE.MeshLambertMaterial({ color: 0x4f8dff })
+    );
+    body.position.y = 0.22;
+    root.add(body);
+    setBlockPosition(root, this.options.world, agent.position, this.options.world.height + 0.45);
+    this.agentVisuals.set(agent.id, {
+      root,
+      mixer: null,
+      clips: [],
+      modelId: "fallback",
+      currentClipName: null
     });
+    this.agentGroup.add(root);
   }
 
   private addResourceNodes(state: CityState) {
@@ -103,7 +275,7 @@ export class SimEntityRenderer {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = node.id;
       setBlockPosition(mesh, this.options.world, node.position, this.options.world.height + 0.45);
-      this.group.add(mesh);
+      this.resourceGroup.add(mesh);
     }
   }
 
@@ -129,7 +301,7 @@ export class SimEntityRenderer {
       const frame = new THREE.LineSegments(edges, material);
       frame.name = project.id;
       setBlockPosition(frame, this.options.world, plot.center, this.options.world.height + blueprint.buildHeight / 2);
-      this.group.add(frame);
+      this.projectGroup.add(frame);
     }
   }
 
@@ -150,6 +322,6 @@ export class SimEntityRenderer {
     highlight.name = `selected-${plot.plotId}`;
     highlight.rotation.x = -Math.PI / 2;
     setBlockPosition(highlight, this.options.world, plot.center, this.options.world.height + 0.035);
-    this.group.add(highlight);
+    this.selectedGroup.add(highlight);
   }
 }

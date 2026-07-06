@@ -262,6 +262,7 @@ export type ValidAgentAction = Omit<AgentAction, "functionId" | "projectId" | "s
 export type Agent = {
   id: string;
   name: string;
+  modelId: string;
   position: WorldPosition;
   destination: WorldPosition | null;
   movementState: AgentMovementState;

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import "./styles.css";
+import { isAgentSpawnModelId, pickAgentModelForSeed } from "./agents/agentModels";
 import { SimulationDebugOverlay } from "./debug/simulationDebugOverlay";
 import { PlayerCameraController } from "./input/PlayerCameraController";
 import { cityBuildingsToConcreteBoxes } from "./render/cityBuildingBoxes";
@@ -45,8 +46,16 @@ const createFreshCityState = () =>
     charterPlotId: centerPlot?.id ?? null
   });
 
+const hydrateCityState = (state: CityState): CityState => ({
+  ...state,
+  agents: state.agents.map((agent) => ({
+    ...agent,
+    modelId: agent.modelId && isAgentSpawnModelId(agent.modelId) ? agent.modelId : pickAgentModelForSeed(agent.id).id
+  }))
+});
+
 const savedState = loadCityState();
-let cityState: CityState = savedState && savedState.plotStates?.length > 0 ? savedState : createFreshCityState();
+let cityState: CityState = savedState && savedState.plotStates?.length > 0 ? hydrateCityState(savedState) : createFreshCityState();
 let paused = false;
 let simSpeed = 4;
 let selectedPlotId: string | null = null;
@@ -71,7 +80,8 @@ const updateOverlay = () =>
       updateOverlay();
     },
     onLoad: () => {
-      cityState = loadCityState() ?? cityState;
+      const loadedState = loadCityState();
+      cityState = loadedState ? hydrateCityState(loadedState) : cityState;
       renderSimState();
     },
     onReset: () => {
@@ -245,5 +255,6 @@ renderer.setAnimationLoop((time) => {
     }
   }
 
+  simEntities.update(deltaSeconds);
   renderer.render(scene, camera);
 });
